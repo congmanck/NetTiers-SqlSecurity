@@ -2,7 +2,7 @@
 
 ## Chọn template trong CodeSmith
 
-Bộ đang chỉnh: `D:\CursorAI\HocPhiChung2025\.security-work\NetTiers`. Trong CodeSmith mở `NetTiers.cst` tại thư mục này và compile/reload template để bỏ cache template cũ. Nếu dùng NetTiers.csp, chọn lại template mới trong UI và lưu một profile riêng; profile gốc trong source còn trỏ thư mục PC2, chưa được sửa. Không dùng profile trỏ bộ template cũ.
+Bộ đang chỉnh: `D:\CursorAICty\NetTiers-SqlSecurity`. Trong CodeSmith mở `NetTiers.cst` tại thư mục này và compile/reload template để bỏ cache template cũ. Nếu dùng NetTiers.csp, chọn lại template mới trong UI và lưu một profile riêng; profile gốc trong source còn trỏ thư mục PC2, chưa được sửa. Không dùng profile trỏ bộ template cũ.
 
 Chọn SQL Server, EnterpriseLibrary `v3_1`, VisualStudioVersion `v2013` và output thử riêng, ví dụ `D:\CursorAI\HocPhiChung2025\.security-work\nettiers-codesmith-trial`. `ExecuteSql=False`; không chạy script SQL hoặc generate trực tiếp vào source đang dùng. Không đặt password thực trong profile bàn giao.
 
@@ -10,10 +10,10 @@ Bộ SQL bảo mật hiện chỉ hỗ trợ EnterpriseLibrary 3.1 đã kiểm t
 
 ## Những phần đã tích hợp
 
-- Table provider base, view provider base và SqlNetTiersProvider sinh SecureSqlDatabase; constructor/config/setter chuyển input thành tham chiếu phiên. Getter chuỗi công khai giữ tương thích bằng ExportLegacy và vẫn có thể tạo plaintext; đường execute nội bộ dùng field opaque.
+- Table provider base, view provider base và SqlNetTiersProvider sinh SecureSqlDatabase; constructor/config/setter chuyển input thành tham chiếu phiên. Getter chuỗi công khai dùng GetSafeConnectionString, không trả Password/User ID; đường execute nội bộ dùng tham chiếu phiên. ExportLegacy/CopyPassword đã bỏ; ExportStorageBytes và các lớp giải mã/DPAPI là internal.
 - TransactionManager giữ lease đến sau connection/transaction, rollback khi stop trước commit và dispose đúng thứ tự. Nhánh ngoài SQL giữ template cũ.
 - DataRepository thay provider trùng tên và bảo vệ tham chiếu trong ConnectionProvider. Utility giữ nguyên câu SQL/tên DB log hiện có, thêm lease/disposal/redaction và không ghi nguyên SQL text tự do. Không sửa template stored procedure/schema.
-- Luồng generate tự ghi lại 5 file trong Security, thêm node project và Compile Include/System.Security. Namespace lấy từ DALNameSpace; không hardcode Accounts.Data. Source assets nằm trong SecuritySource/*.cs.txt, dùng marker __DAL_NAMESPACE__.
+- Luồng generate tự ghi lại 8 file trong Security, thêm node project và Compile Include/System.Security. Namespace lấy từ DALNameSpace; không hardcode Accounts.Data. Source assets nằm trong SecuritySource/*.cs.txt, dùng marker __DAL_NAMESPACE__.
 - AppConnection, form, Program và ReleaseProtection tiếp tục tích hợp bằng gói HocPhi-SqlSecurity-Porting riêng; generator này không tự sửa các file desktop đó.
 
 Không chuyển token sql-session sang SqlConnection/SqlConnectionStringBuilder trực tiếp. Các caller/helper bên ngoài provider vẫn phải được chuyển sang API lease như hướng dẫn porting. Nếu file cấu hình có raw SQL connection string, ConfigurationManager/caller cũ vẫn có thể giữ bản sao plaintext; template provider không thay thế việc bảo vệ cấu hình trong AppConnection.
@@ -21,7 +21,7 @@ Không chuyển token sql-session sang SqlConnection/SqlConnectionStringBuilder 
 ## Kiểm tra bằng CodeSmith trên máy có engine
 
 1. Compile template mới, chọn ít nhất một table, một view và custom stored procedure đang dùng; generate với ExecuteSql=False vào output thử.
-2. Kiểm tra 5 file Security, namespace, Compile Include, target framework và references; build output bằng compiler mới.
+2. Kiểm tra 8 file Security, namespace, Compile Include, target framework và references; build output bằng compiler mới.
 3. Generate lần hai cùng profile vào output thử. Chạy lại build và kiểm tra không mất Security hoặc thay adapter về SqlDatabase.
 4. Copy script Convert-NetTiers.py vào scripts/security của solution thử và chạy --check. Mẫu namespace khác vẫn cần kiểm tra trực tiếp constructor/config/getter/raw connection; --check không phải chứng minh an toàn toàn bộ.
 5. Chạy fixture và kiểm thử SQL/Windows auth, reader/dataset, transaction commit/rollback, provider reload, custom procedure, log nhạy cảm và tác vụ đồng thời trên DB thử. Không cấp credential thực qua command line.
@@ -43,3 +43,6 @@ Chưa tìm thấy CodeSmith engine trên máy hiện tại. **Chưa chạy gener
 Template mới mặc định DotNetVersion=v4_5, EntLibVersion=v3_1 và ExecuteSql=False. Profile cũ chọn v4 được nâng lên v4_5 trong luồng SQL; csproj đầu ra tối thiểu v4.5.2. Profile lưu sẵn có thể ghi đè giá trị mặc định, nên vẫn kiểm tra EntLibVersion và ExecuteSql sau khi mở. Không tự tắt ExecuteSql nếu người dùng bật rõ trong profile. Lỗi trùng custom method GetByBillId/GetByBillIdHoanPhi chưa được sửa bởi thay đổi framework này.
 
 Da sua nhanh IncludeComponents (Accounts.Services): project Services sinh ra cung toi thieu v4.5.2 de tham chieu Data/Entities v4.5.2.
+
+## API hardening 2026-10-17
+SqlConfiguration điều phối token, phiên và lưu/migrate DPAPI bên trong DAL. AppConnection và frmConfig cần bản port mới cùng DLL. Không dùng InternalsVisibleTo. Dữ liệu text/binary cũ giữ tương thích, EXE/plugin dùng API đã bỏ phải rebuild. Tests/Test-ApiHardening.ps1 kiểm tra hai namespace; chưa chạy CodeSmith với database thử nghiệm. Xem báo cáo API-HARDENING-20261017.md trong HocPhiChung2026.
