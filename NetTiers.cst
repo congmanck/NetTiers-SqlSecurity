@@ -1,4 +1,4 @@
-﻿<%@ CodeTemplate Src="TemplateLib/CommonSqlCode.cs" Inherits="MoM.Templates.CommonSqlCode" Language="C#" TargetLanguage="Text" Description="NetTiers main template." Debug="True" ResponseEncoding="UTF-8" NoWarn="0108,0618,1572,1573,1574,0162,2002" CompilerVersion="v3.5"%>
+<%@ CodeTemplate Src="TemplateLib/CommonSqlCode.cs" Inherits="MoM.Templates.CommonSqlCode" Language="C#" TargetLanguage="Text" Description="NetTiers main template." Debug="True" ResponseEncoding="UTF-8" NoWarn="0108,0618,1572,1573,1574,0162,2002" CompilerVersion="v3.5"%>
 <%@ Assembly Name="SchemaExplorer" %>
 <%@ Assembly Name="System.Design" %>
 <%@ Assembly Name="System.DirectoryServices" %>
@@ -1999,7 +1999,7 @@
             {
                 string securityDirectory = Path.Combine(rootPathDAL, "Security");
                 Directory.CreateDirectory(securityDirectory);
-                string[] securityFiles = new string[] { "AuditRedaction.cs","ConnectionToken.cs","DpapiConnectionFile.cs","LegacyConnectionDecoder.cs","SecureSqlDatabase.cs","SessionReader.cs","SqlSession.cs" };
+                string[] securityFiles = new string[] { "AuditRedaction.cs","ConnectionToken.cs","DpapiConnectionFile.cs","LegacyConnectionDecoder.cs","SecureSqlDatabase.cs","SessionReader.cs","SqlSession.cs","SqlConfiguration.cs" };
                 foreach (string securityFile in securityFiles)
                 {
                     string sourceFile = Path.Combine(this.CodeTemplateInfo.DirectoryName, "SecuritySource\\" + securityFile + ".txt");

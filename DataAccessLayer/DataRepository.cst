@@ -1,4 +1,4 @@
-﻿<%@ CodeTemplate Src="..\TemplateLib\CommonSqlCode.cs" Inherits="MoM.Templates.CommonSqlCode" Language="C#" TargetLanguage="C#" Description="Template description here." Debug="True" ResponseEncoding="UTF-8" NoWarn="0108,0618,1572,1573,1574,0162,2002"%>
+<%@ CodeTemplate Src="..\TemplateLib\CommonSqlCode.cs" Inherits="MoM.Templates.CommonSqlCode" Language="C#" TargetLanguage="C#" Description="Template description here." Debug="True" ResponseEncoding="UTF-8" NoWarn="0108,0618,1572,1573,1574,0162,2002"%>
 <%@ Assembly Name="SchemaExplorer" %>
 <%@ Assembly Name="System.Design" %>
 <%@ Import Namespace="SchemaExplorer" %>
@@ -326,12 +326,22 @@ namespace <%=DALNameSpace%>
 					// use default ConnectionStrings if _section has already been discovered
 					if ( _config == null && _section != null )
 					{
-						return WebConfigurationManager.ConnectionStrings;
+						<% if (ProviderInvariantName == "System.Data.SqlClient") { %>
+                    var safe = new ConnectionStringSettingsCollection();
+                    foreach (ConnectionStringSettings item in WebConfigurationManager.ConnectionStrings)
+                        safe.Add(new ConnectionStringSettings(item.Name, <%= DALNameSpace %>.Security.SqlSessions.GetSafeConnectionString(item.ConnectionString), item.ProviderName));
+                    return safe;
+<% } else { %>return WebConfigurationManager.ConnectionStrings;<% } %>
 					}
 					
 					return Configuration.ConnectionStrings.ConnectionStrings;
 					<% } else { %>
-					return WebConfigurationManager.ConnectionStrings;
+					<% if (ProviderInvariantName == "System.Data.SqlClient") { %>
+                    var safe = new ConnectionStringSettingsCollection();
+                    foreach (ConnectionStringSettings item in WebConfigurationManager.ConnectionStrings)
+                        safe.Add(new ConnectionStringSettings(item.Name, <%= DALNameSpace %>.Security.SqlSessions.GetSafeConnectionString(item.ConnectionString), item.ProviderName));
+                    return safe;
+<% } else { %>return WebConfigurationManager.ConnectionStrings;<% } %>
 					<% } // end if ( IncludeDesignTimeSupport ) { %>
 				<% } // end if ( IsConnectionStringAzure ) { %>
 			}
@@ -356,7 +366,7 @@ namespace <%=DALNameSpace%>
 							_connections = new Dictionary<String, ConnectionProvider>();
 		
 							// add a connection provider for each configured connection string
-							foreach ( ConnectionStringSettings conn in ConnectionStrings )
+							foreach ( ConnectionStringSettings conn in WebConfigurationManager.ConnectionStrings )
 							{
 								_connections.Add(conn.Name, new ConnectionProvider(conn.Name, conn.ConnectionString));
 							}

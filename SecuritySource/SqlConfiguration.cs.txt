@@ -1,0 +1,403 @@
+using System;
+using System.Data.SqlClient;
+using System.Linq;
+using System.Net.NetworkInformation;
+using __DAL_NAMESPACE__;
+using __DAL_NAMESPACE__.Security;
+using System.Security.Cryptography;
+using System.Text;
+using System.IO;
+using System.Configuration;
+
+namespace __DAL_NAMESPACE__.Security
+{
+    public static class SqlConfiguration
+    {
+        public static string CreateSessionFromToken(string token)
+        {
+            try
+            {
+                string cipher;
+                if (ReadConfiguredToken(token.Trim(), out cipher) != ConnectionTokenStatus.Valid)
+                    throw new InvalidConnectionTokenException();
+                var session = LegacyConnectionDecoder.Decode(cipher);
+                if (string.IsNullOrWhiteSpace(new SqlConnectionStringBuilder(session.ConnectionString).InitialCatalog))
+                { session.Dispose(); throw new InvalidConnectionTokenException(); }
+                session.ImportedCipher = cipher;
+                return SqlSessions.Register(session);
+            }
+            catch { throw new InvalidConnectionTokenException(); }
+        }
+
+        public static string CreateManualSession(string currentReference, string server, string database, string userName, char[] enteredPassword)
+        {
+            if (string.IsNullOrWhiteSpace(database)) throw new ArgumentException("Database required.");
+            if (enteredPassword == null) throw new ArgumentNullException("enteredPassword");
+            SqlSession current = null;
+            if (SqlSessions.IsReference(currentReference)) current = SqlSessions.Resolve(currentReference);
+            var options = new SqlConnectionStringBuilder(current == null ? "" : current.ConnectionString);
+            options.DataSource = server; options.InitialCatalog = database; options.PersistSecurityInfo = false;
+            options.IntegratedSecurity = string.IsNullOrEmpty(userName) && enteredPassword.Length == 0;
+            if (!options.IntegratedSecurity && enteredPassword.Length == 0)
+            {
+                if (current == null) throw new ArgumentException("Enter SQL password.");
+                return SqlSessions.Register(current.Reconfigure(options.ConnectionString, userName, null));
+            }
+            using (var secret = new System.Security.SecureString())
+            {
+                foreach (char character in enteredPassword) secret.AppendChar(character);
+                return SqlSessions.Register(new SqlSession(options.ConnectionString, userName, secret));
+            }
+        }
+        /// <summary>
+        /// Nhan ket noi
+        /// </summary>
+        private const string DpapiPrefix = "DPAPI-LM-V1:";
+        private const string DpapiSqlPrefix = "DPAPI-SQL-LM-V1:";
+
+        private static string DpapiConnectionPath
+        {
+            get
+            {
+                return Path.Combine(
+                    AppDomain.CurrentDomain.BaseDirectory,
+                    "HocPhi.dpa");
+            }
+        }
+
+        // Đọc cấu hình: ưu tiên tên mới, sau đó mới tìm tên cũ.
+        private static string ResolveDpapiReadPath()
+        {
+            if (File.Exists(DpapiConnectionPath))
+                return DpapiConnectionPath;
+
+            string legacyPath = Path.Combine(
+                AppDomain.CurrentDomain.BaseDirectory,
+                "HocPhi.dpapi");
+
+            if (File.Exists(legacyPath))
+                return legacyPath;
+
+            throw new InvalidOperationException(
+                "Chưa có cấu hình DPAPI trên máy này.");
+        }
+        private static bool AutoConvertConnectionToDpapi
+        {
+            get
+            {
+                string value = ConfigurationManager.AppSettings[
+                    "AutoConvertConnectionToDpapi"];
+
+                bool enabled;
+
+                if (bool.TryParse(value?.Trim(), out enabled))
+                    return enabled;
+
+                return true;
+            }
+        }
+        // Ghi giá trị rỗng xuống file .exe.config của tiến trình đang chạy.
+        private static void ClearConfiguredConnection(string expected = null)
+        {
+            Configuration config = ConfigurationManager.OpenExeConfiguration(
+                ConfigurationUserLevel.None);
+
+            ConnectionStringSettings setting =
+                config.ConnectionStrings.ConnectionStrings[
+                    "netTiersConnectionString"];
+
+            if (setting == null)
+            {
+                throw new InvalidOperationException(
+                    "Không tìm thấy netTiersConnectionString trong file cấu hình.");
+            }
+
+            if (expected != null && (setting.ConnectionString ?? "").Trim() != expected)
+                throw new InvalidOperationException("Cấu hình đã thay đổi trong lúc kiểm tra SQL. Vui lòng thử lại.");
+            setting.ConnectionString = "";
+
+            config.Save(ConfigurationSaveMode.Modified);
+
+            ConfigurationManager.RefreshSection("connectionStrings");
+        }
+        public static void SaveCipherConnectionToDpapi(string cipherConnection)
+        {
+            lock (SessionGate)
+            {
+                PersistCipherConnection(cipherConnection);
+                ClearConfiguredConnection();
+            }
+        }
+
+        // Writes and verifies DPAPI without changing .config. Used only after SQL validation...
+        private static byte[] PersistCipherConnection(string cipherConnection)
+        {
+            if (string.IsNullOrWhiteSpace(cipherConnection)) throw new ArgumentException("Chuỗi kết nối mã hóa không được để trống.");
+            using (var verified = LegacyConnectionDecoder.Decode(cipherConnection)) { }
+            byte[] data = Encoding.UTF8.GetBytes(cipherConnection);
+            try
+            {
+                byte[] encoded;
+                if (cipherConnection.StartsWith(DpapiPrefix, StringComparison.Ordinal) || cipherConnection.StartsWith(DpapiSqlPrefix, StringComparison.Ordinal))
+                {
+                    using (var content = DpapiConnectionFile.Read(data)) encoded = DpapiConnectionFile.Protect(content.Kind, content.Data);
+                }
+                else encoded = DpapiConnectionFile.Protect(DpapiContentKind.LegacyCipher, data);
+                WriteConnectionFile(encoded);
+                return encoded;
+            }
+            finally { Array.Clear(data, 0, data.Length); }
+        }
+
+        private static void WriteConnectionFile(byte[] encoded)
+        {
+            DpapiConnectionFile.WriteAtomic(DpapiConnectionPath, encoded, path =>
+            {
+                using (var verified = LegacyConnectionDecoder.DecodeFileBytes(File.ReadAllBytes(path))) { }
+            });
+        }
+
+        private static readonly object SessionGate = new object();
+        private static string runtimeKey, runtimeStored, runtimeSourcePath;
+        private static string runtimeRequest, runtimeConfigValue, pendingConfigValue, pendingCipher;
+
+        private static string Fingerprint(string value)
+        {
+            byte[] bytes = Encoding.UTF8.GetBytes(value);
+            try { using (var sha = SHA256.Create()) return Convert.ToBase64String(sha.ComputeHash(bytes)); }
+            finally { Array.Clear(bytes, 0, bytes.Length); }
+        }
+        private static string Fingerprint(byte[] value)
+        {
+            using (var sha = SHA256.Create()) return Convert.ToBase64String(sha.ComputeHash(value));
+        }
+
+        private static string ConfiguredValue()
+        {
+            ConfigurationManager.RefreshSection("connectionStrings");
+            var setting = ConfigurationManager.OpenExeConfiguration(ConfigurationUserLevel.None).ConnectionStrings.ConnectionStrings["netTiersConnectionString"];
+            return (setting == null ? "" : setting.ConnectionString ?? "").Trim();
+        }
+
+        private static __DAL_NAMESPACE__.Security.ConnectionTokenStatus ReadConfiguredToken(string token, out string cipher)
+        {
+            byte[] key = null;
+            try
+            {
+                key = __DAL_NAMESPACE__.Security.ConnectionToken.ReadKey(Path.Combine(
+                    AppDomain.CurrentDomain.BaseDirectory, __DAL_NAMESPACE__.Security.ConnectionToken.KeyFileName));
+                return __DAL_NAMESPACE__.Security.ConnectionToken.TryOpen(token, key, DateTime.UtcNow, out cipher);
+            }
+            catch (IOException) { throw new __DAL_NAMESPACE__.Security.InvalidConnectionTokenException(); }
+            catch (UnauthorizedAccessException) { throw new __DAL_NAMESPACE__.Security.InvalidConnectionTokenException(); }
+            catch (CryptographicException) { throw new __DAL_NAMESPACE__.Security.InvalidConnectionTokenException(); }
+            finally { if (key != null) Array.Clear(key, 0, key.Length); }
+        }
+
+        public static string RuntimeConnectionKey
+        {
+            get
+            {
+                lock (SessionGate)
+                {
+                    string configured = ConfiguredValue();
+                    // A token already accepted for this session is not rechecked while SQL connects.
+                    if (runtimeKey != null && pendingConfigValue != null && configured == pendingConfigValue)
+                        return runtimeKey;
+
+                    string stored = configured;
+                    string sourcePath = null;
+                    byte[] storedFile = null;
+                    bool token = configured.StartsWith("HPC1.", StringComparison.Ordinal);
+                    bool expired = false;
+                    if (token)
+                    {
+                        string cipher;
+                        var status = ReadConfiguredToken(configured, out cipher);
+                        if (status == __DAL_NAMESPACE__.Security.ConnectionTokenStatus.Invalid)
+                            throw new __DAL_NAMESPACE__.Security.InvalidConnectionTokenException();
+                        expired = status == __DAL_NAMESPACE__.Security.ConnectionTokenStatus.Expired;
+                        stored = cipher;
+                    }
+                    if (configured.Length == 0 || expired)
+                    {
+                        try { sourcePath = ResolveDpapiReadPath(); }
+                        catch (InvalidOperationException)
+                        {
+                            if (expired) throw new __DAL_NAMESPACE__.Security.InvalidConnectionTokenException();
+                            throw;
+                        }
+                        storedFile = File.ReadAllBytes(sourcePath);
+                        stored = Fingerprint(storedFile);
+                    }
+
+                    string request = Fingerprint(configured + "\n" + sourcePath + "\n" + stored);
+                    if (runtimeKey != null && request == runtimeRequest) return runtimeKey;
+                    string appName=$"AF8{SafeSubstring(GetMacAddress(),4,4)}8{SafeSubstring(Environment.MachineName,0,15)}8{SafeSubstring(Environment.UserName,0,15)}8{SafeSubstring(GetLocalIPAddress()?.Replace(".",""),0,12)}";
+                    __DAL_NAMESPACE__.Security.SqlSession session;
+                    try { session = storedFile == null ? LegacyConnectionDecoder.Decode(stored, appName) : LegacyConnectionDecoder.DecodeFileBytes(storedFile, appName); }
+                    catch
+                    {
+                        if (token && !expired) throw new __DAL_NAMESPACE__.Security.InvalidConnectionTokenException();
+                        throw;
+                    }
+                    string next;
+                    try { next = __DAL_NAMESPACE__.Security.SqlSessions.Register(session); }
+                    catch { session.Dispose(); throw; }
+                    string old = runtimeKey;
+                    runtimeKey = next;
+                    runtimeStored = storedFile == null ? Fingerprint(stored) : stored;
+                    runtimeRequest = request;
+                    runtimeConfigValue = configured;
+                    runtimeSourcePath = sourcePath;
+                    pendingConfigValue = sourcePath == null ? configured : null;
+                    pendingCipher = sourcePath == null ? stored : null;
+
+                    if (old != null) __DAL_NAMESPACE__.Security.SqlSessions.Retire(old);
+                    return next;
+                }
+            }
+        }
+
+        // The caller must have successfully opened SQL using checkedReference.
+        public static void CompleteConfigurationAfterConnection(string checkedReference)
+        {
+            lock (SessionGate)
+            {
+                if (!AutoConvertConnectionToDpapi || runtimeKey == null || checkedReference != runtimeKey) return;
+                if (ConfiguredValue() != runtimeConfigValue) return;
+                if (pendingConfigValue != null)
+                {
+                    string expected = pendingConfigValue;
+                    byte[] saved = PersistCipherConnection(pendingCipher);
+                    ClearConfiguredConnection(expected);
+                    pendingConfigValue = pendingCipher = null;
+                    runtimeConfigValue = "";
+                    runtimeSourcePath = DpapiConnectionPath;
+                    runtimeStored = Fingerprint(saved);
+                    runtimeRequest = Fingerprint("\n" + runtimeSourcePath + "\n" + runtimeStored);
+                }
+                MigrateLegacyDpapiAfterConnection(checkedReference);
+                // The authenticated expired token is no longer needed once fallback SQL worked.
+                if (pendingConfigValue == null && runtimeConfigValue != null
+                    && runtimeConfigValue.StartsWith("HPC1.", StringComparison.Ordinal)
+                    && string.Equals(runtimeSourcePath, DpapiConnectionPath, StringComparison.OrdinalIgnoreCase)
+                    && File.Exists(runtimeSourcePath))
+                {
+                    byte[] saved = File.ReadAllBytes(runtimeSourcePath);
+                    if (Fingerprint(saved) != runtimeStored) return;
+                    using (var verified = LegacyConnectionDecoder.DecodeFileBytes(saved)) { }
+                    ClearConfiguredConnection(runtimeConfigValue);
+                    runtimeConfigValue = "";
+                    runtimeRequest = Fingerprint("\n" + runtimeSourcePath + "\n" + runtimeStored);
+                }
+            }
+        }
+
+        // Call only after SQL connectivity has been verified for this exact runtime reference.
+        public static void MigrateLegacyDpapiAfterConnection(string checkedReference)
+        {
+            lock (SessionGate)
+            {
+                if (!AutoConvertConnectionToDpapi || runtimeKey == null || checkedReference != runtimeKey
+                    || runtimeSourcePath == null || !File.Exists(runtimeSourcePath)) return;
+                string sourcePath = runtimeSourcePath;
+                byte[] source = File.ReadAllBytes(sourcePath);
+                if (Fingerprint(source) != runtimeStored) return;
+                bool oldName = !string.Equals(sourcePath, DpapiConnectionPath, StringComparison.OrdinalIgnoreCase);
+                bool binary = DpapiConnectionFile.IsBinary(source);
+                if (!oldName && binary) return;
+                using (var verified = LegacyConnectionDecoder.DecodeFileBytes(source)) { }
+                byte[] encoded;
+                using (var content = DpapiConnectionFile.Read(source))
+                {
+                    if (oldName && File.Exists(DpapiConnectionPath))
+                    {
+                        using (var existing = DpapiConnectionFile.Read(File.ReadAllBytes(DpapiConnectionPath)))
+                            if (existing.Kind != content.Kind || !existing.Data.SequenceEqual(content.Data)) return;
+                    }
+                    encoded = DpapiConnectionFile.Protect(content.Kind, content.Data);
+                }
+                if (!File.ReadAllBytes(sourcePath).SequenceEqual(source)) return;
+                WriteConnectionFile(encoded);
+                using (var verified = LegacyConnectionDecoder.DecodeFileBytes(File.ReadAllBytes(DpapiConnectionPath))) { }
+                if (oldName && File.Exists(sourcePath) && File.ReadAllBytes(sourcePath).SequenceEqual(source)) File.Delete(sourcePath);
+                runtimeSourcePath = DpapiConnectionPath;
+                runtimeStored = Fingerprint(encoded);
+                runtimeRequest = Fingerprint((runtimeConfigValue ?? "") + "\n" + runtimeSourcePath + "\n" + runtimeStored);
+            }
+        }
+
+        public static void SaveSession(string reference)
+        {
+            lock (SessionGate)
+            {
+                var session = SqlSessions.Resolve(reference);
+                if (session.ImportedCipher != null)
+                {
+                    PersistCipherConnection(session.ImportedCipher);
+                    ClearConfiguredConnection();
+                    session.ImportedCipher = null;
+                    return;
+                }
+                byte[] plain = SqlSessions.Resolve(reference).ExportStorageBytes();
+                try
+                {
+                    WriteConnectionFile(DpapiConnectionFile.Protect(DpapiContentKind.SqlConnection, plain));
+                    ClearConfiguredConnection();
+                }
+                finally { Array.Clear(plain, 0, plain.Length); }
+            }
+        }
+
+        static string SafeSubstring(string input, int start, int length)
+        {
+            if (string.IsNullOrEmpty(input)) return string.Empty;
+            if (start >= input.Length) return string.Empty;
+
+            if (start + length > input.Length)
+                return input.Substring(start);
+
+            return input.Substring(start, length);
+        }
+        private static string GetMacAddress()
+        {
+            var nic = NetworkInterface.GetAllNetworkInterfaces()
+                .FirstOrDefault(n =>
+                    n.OperationalStatus == OperationalStatus.Up &&
+                    n.NetworkInterfaceType != NetworkInterfaceType.Loopback &&
+                    n.NetworkInterfaceType != NetworkInterfaceType.Tunnel &&      // Loại VPN/Tunnel
+                    n.NetworkInterfaceType != NetworkInterfaceType.Ppp &&         // Loại PPP
+                    !n.Description.ToLower().Contains("virtual") &&               // Loại card ảo (Hyper-V, VMware, ...)
+                    !n.Description.ToLower().Contains("vpn") &&                   // Loại VPN
+                    !n.Name.ToLower().Contains("vpn")
+                                     );
+
+            return nic?.GetPhysicalAddress()?.ToString() ?? "Unknown";
+        }
+        private static string GetLocalIPAddress()
+        {
+            var nic = NetworkInterface.GetAllNetworkInterfaces()
+                .FirstOrDefault(n =>
+                    n.OperationalStatus == OperationalStatus.Up &&
+                    n.NetworkInterfaceType != NetworkInterfaceType.Loopback &&
+                    n.NetworkInterfaceType != NetworkInterfaceType.Tunnel &&      // Loại VPN/Tunnel
+                    n.NetworkInterfaceType != NetworkInterfaceType.Ppp &&         // Loại PPP
+                    !n.Description.ToLower().Contains("virtual") &&               // Loại card ảo (Hyper-V, VMware, ...)
+                    !n.Description.ToLower().Contains("vpn") &&                   // Loại VPN
+                    !n.Name.ToLower().Contains("vpn")
+                                     );
+
+            if (nic == null)
+                return "Unknown";
+
+            var ipProps = nic.GetIPProperties();
+            var address = ipProps.UnicastAddresses
+                .FirstOrDefault(a => a.Address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork &&
+                                     !System.Net.IPAddress.IsLoopback(a.Address));
+
+            return address?.Address.ToString() ?? "Unknown";
+        }
+
+    }
+}

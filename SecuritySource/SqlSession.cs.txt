@@ -31,6 +31,10 @@ namespace __DAL_NAMESPACE__.Security
                 catch { password.Dispose(); throw; }
             }
         }
+
+        internal string ImportedCipher { get; set; }
+        internal SqlSession Reconfigure(string options, string userName, System.Security.SecureString replacement)
+        { using (Acquire()) { if (replacement == null && !string.Equals(userName, UserName, StringComparison.Ordinal)) throw new ArgumentException("Enter password when changing SQL login."); return new SqlSession(options, userName, replacement ?? password); } }
         public SqlLease Acquire()
         {
             var check=SqlSessions.BeforeOperation;if(check!=null)check();
@@ -57,24 +61,11 @@ namespace __DAL_NAMESPACE__.Security
             if (disposed) return;
             // Same credential object selects the original pool; never clear unrelated pools.
             try { using (var connection = Connection()) SqlConnection.ClearPool(connection); }
-            finally { password.Dispose(); disposed = true; }
+            finally { ImportedCipher = null; password.Dispose(); disposed = true; }
         }
         internal bool IsDisposed { get { lock (gate) return disposed; } }
-        public SecureString CopyPassword() { using(Acquire())return password.Copy(); }
-        /// <summary>Compatibility boundary only: produces an immutable plaintext password.</summary>
-        public string ExportLegacy()
-        {
-            using (Acquire())
-            {
-                var builder = new SqlConnectionStringBuilder(ConnectionString);
-                if (credential == null) return builder.ConnectionString;
-                IntPtr pointer = System.Runtime.InteropServices.Marshal.SecureStringToGlobalAllocUnicode(password);
-                try { builder.UserID = UserName; builder.Password = System.Runtime.InteropServices.Marshal.PtrToStringUni(pointer); return builder.ConnectionString; }
-                finally { System.Runtime.InteropServices.Marshal.ZeroFreeGlobalAllocUnicode(pointer); }
-            }
-        }
         /// <summary>Storage compatibility buffer; the caller must clear the returned bytes.</summary>
-        public byte[] ExportStorageBytes()
+        internal byte[] ExportStorageBytes()
         {
             using(Acquire())
             {
@@ -120,7 +111,7 @@ namespace __DAL_NAMESPACE__.Security
         public static SqlSession Resolve(string reference)
         { lock (Gate) { SqlSession value; if (!Sessions.TryGetValue(reference, out value)) throw new InvalidOperationException("Unknown SQL session."); return value; } }
         public static SqlLease Acquire(string reference) { return Resolve(reference).Acquire(); }
-        public static string ExportLegacy(string value) { return IsReference(value) ? Resolve(value).ExportLegacy() : value; }
+        public static string GetSafeConnectionString(string value) { if (IsReference(value)) return Resolve(value).ConnectionString; if (string.IsNullOrWhiteSpace(value)) return value; try { var options = new SqlConnectionStringBuilder(value); options.Remove("Password"); options.Remove("User ID"); options.PersistSecurityInfo = false; return options.ConnectionString; } catch (ArgumentException) { return ""; } }
         public static void Retire(string reference)
         { if (IsReference(reference)) { lock (Gate) { SqlSession value; if (Sessions.TryGetValue(reference, out value)) { value.Dispose(); if (value.IsDisposed) Sessions.Remove(reference); } } } }
         public static void Stop()

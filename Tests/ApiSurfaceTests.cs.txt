@@ -1,0 +1,86 @@
+using System;
+using System.Configuration;
+using System.Data.SqlClient;
+using System.IO;
+using System.Linq;
+using System.Reflection;
+using System.Runtime.InteropServices;
+using System.Security;
+using System.Security.Cryptography;
+using System.Text;
+using __DAL_NAMESPACE__.Security;
+
+internal static class ApiSurfaceProbe
+{
+    static int checks;
+    static void Check(bool value) { if (!value) throw new Exception("Check " + checks); checks++; }
+    static void Reject(Action action) { bool failed = false; try { action(); } catch (ArgumentException) { failed = true; } Check(failed); }
+    static void RejectLifecycle(Action action) { bool failed = false; try { action(); } catch (InvalidOperationException) { failed = true; } Check(failed); }
+    static string Credential(string reference)
+    {
+        using (var lease = SqlSessions.Acquire(reference))
+        using (var connection = lease.CreateConnection())
+        {
+            if (connection.Credential == null) return "";
+            IntPtr pointer = Marshal.SecureStringToGlobalAllocUnicode(connection.Credential.Password);
+            try { return Marshal.PtrToStringUni(pointer); }
+            finally { Marshal.ZeroFreeGlobalAllocUnicode(pointer); }
+        }
+    }
+    static string Create(string previous, string server, string database, string user, string password)
+    {
+        char[] chars = password.ToCharArray();
+        try { return SqlConfiguration.CreateManualSession(previous, server, database, user, chars); }
+        finally { Array.Clear(chars, 0, chars.Length); }
+    }
+    static int Main()
+    {
+        try
+        {
+            var assembly = typeof(SqlSessions).Assembly;
+            foreach (string type in new[] { "LegacyConnectionDecoder", "DpapiConnectionFile", "DpapiContent", "DpapiContentKind" })
+            {
+                var hidden = assembly.GetType("__DAL_NAMESPACE__.Security." + type, false);
+                Check(hidden == null || !hidden.IsVisible);
+            }
+            foreach (var type in assembly.GetExportedTypes())
+                foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+                    Check(!new[] { "DecodeBytes", "ExportLegacy", "CopyPassword", "ExportStorageBytes" }.Contains(method.Name));
+            string first = Create(null, "localhost", "Synthetic", "synthetic-user", "test;\" unicode-đ");
+            var safe = new SqlConnectionStringBuilder(SqlSessions.GetSafeConnectionString(first));
+            Check(!safe.ShouldSerialize("Password") && !safe.ShouldSerialize("User ID"));
+            Check(Credential(first) == "test;\" unicode-đ");
+            string next = Create(first, "newhost", "NextDatabase", "synthetic-user", "");
+            Check(Credential(next) == Credential(first));
+            Check(new SqlConnectionStringBuilder(SqlSessions.GetSafeConnectionString(next)).DataSource == "newhost");
+            Reject(() => Create(first, "localhost", "Synthetic", "different-user", ""));
+            Reject(() => Create(null, "localhost", "Synthetic", "synthetic-user", ""));
+            string changed = Create(first, "localhost", "Synthetic", "different-user", "new-password");
+            Check(Credential(changed) == "new-password" && SqlSessions.Resolve(changed).UserName == "different-user");
+            string integrated = Create(first, "localhost", "Synthetic", "", "");
+            using (var lease = SqlSessions.Acquire(integrated))
+            using (var connection = lease.CreateConnection()) Check(connection.Credential == null && new SqlConnectionStringBuilder(connection.ConnectionString).IntegratedSecurity);
+            safe = new SqlConnectionStringBuilder(SqlSessions.GetSafeConnectionString("Server=localhost;Database=x;Uid=u;Pwd=secret;Persist Security Info=true"));
+            Check(!safe.ShouldSerialize("Password") && !safe.ShouldSerialize("User ID") && !safe.PersistSecurityInfo);
+            var configuration = ConfigurationManager.OpenExeConfiguration(ConfigurationUserLevel.None);
+            configuration.ConnectionStrings.ConnectionStrings.Add(new ConnectionStringSettings("netTiersConnectionString", ""));
+            configuration.Save(ConfigurationSaveMode.Modified);
+            SqlConfiguration.SaveSession(next);
+            Check(File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "HocPhi.dpa")));
+            string recovered = SqlConfiguration.RuntimeConnectionKey;
+            Check(Credential(recovered) == Credential(next));
+            string retiring = Create(null, "localhost", "LeaseTest", "test-user", "synthetic-only");
+            var active = SqlSessions.Acquire(retiring);
+            SqlSessions.Retire(retiring);
+            RejectLifecycle(() => SqlSessions.Acquire(retiring));
+            using (var pending = active.CreateConnection()) Check(pending.Credential != null);
+            active.Dispose();
+            RejectLifecycle(() => active.CreateConnection());
+            SqlSessions.Retire(retiring);
+            SqlSessions.Retire(first); SqlSessions.Retire(next); SqlSessions.Retire(changed); SqlSessions.Retire(integrated);
+            Console.WriteLine("PASS " + checks + " public API/session checks; synthetic credentials, no SQL connection.");
+            return 0;
+        }
+        catch (Exception error) { Console.Error.WriteLine("FAIL " + error.GetType().Name + " check " + checks); return 1; }
+    }
+}

@@ -1,4 +1,4 @@
-﻿<%--
+<%--
  * $Id: TransactionManager.cst,v 1.1 2005/12/02 15:23:23 jroland Exp $
  * Last modified by $Author: jroland $
  * Last modified at $Date: 2006-03-16 16:53:08 -0600 (Thu, 16 Mar 2006) $
@@ -52,7 +52,7 @@ namespace <%= DALNameSpace %>
 		/// </exception>
 		public string ConnectionString
 		{
-				get { return <%= DALNameSpace %>.Security.SqlSessions.ExportLegacy(this._connectionString); }
+				get { return <%= DALNameSpace %>.Security.SqlSessions.GetSafeConnectionString(this._connectionString); }
 			set
 			{
 				//make sure transaction is open

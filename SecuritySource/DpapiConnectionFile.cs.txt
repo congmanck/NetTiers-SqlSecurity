@@ -6,9 +6,9 @@ using System.Text;
 
 namespace __DAL_NAMESPACE__.Security
 {
-    public enum DpapiContentKind : byte { LegacyCipher = 1, SqlConnection = 2, UpdateSettings = 3 }
+    internal enum DpapiContentKind : byte { LegacyCipher = 1, SqlConnection = 2, UpdateSettings = 3 }
 
-    public sealed class DpapiContent : IDisposable
+    internal sealed class DpapiContent : IDisposable
     {
         public DpapiContentKind Kind { get; private set; }
         public byte[] Data { get; private set; }
@@ -17,7 +17,7 @@ namespace __DAL_NAMESPACE__.Security
     }
 
     // Wire format shared with the updater. The entire header and payload are inside DPAPI.
-    public static class DpapiConnectionFile
+    internal static class DpapiConnectionFile
     {
         private static readonly string[] Prefixes = { "DPAPI-LM-V1:", "DPAPI-SQL-LM-V1:", "DPAPI-UPDATE-LM-V1:" };
 
