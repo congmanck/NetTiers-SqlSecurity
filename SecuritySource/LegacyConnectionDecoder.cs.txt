@@ -1,0 +1,134 @@
+using System;
+using System.Collections.Generic;
+using System.Data.SqlClient;
+using System.IO;
+using System.Security;
+using System.Security.Cryptography;
+using System.Text;
+
+namespace __DAL_NAMESPACE__.Security
+{
+    public static class LegacyConnectionDecoder
+    {
+        private const string PassPhrase = "aquafina@1163";
+        private static readonly byte[] Iv = Encoding.ASCII.GetBytes("tu89geji340t89u2");
+        public static SqlSession Decode(string stored, string applicationName = null)
+        {
+            byte[] plain = DecodeBytes(stored); char[] characters = null;
+            try { characters = Encoding.UTF8.GetChars(plain); return Parse(characters, applicationName); }
+            finally { Array.Clear(plain, 0, plain.Length); if (characters != null) Array.Clear(characters, 0, characters.Length); }
+        }
+        public static byte[] DecodeBytes(string stored)
+        {
+            if (string.IsNullOrWhiteSpace(stored)) throw new ArgumentException("Connection configuration required.");
+            string sqlPrefix = "DPAPI-SQL-LM-V1:", legacyPrefix = "DPAPI-LM-V1:";
+            if (stored.StartsWith(sqlPrefix, StringComparison.Ordinal)) return Unprotect(stored.Substring(sqlPrefix.Length));
+            if (stored.StartsWith(legacyPrefix, StringComparison.Ordinal))
+            {
+                byte[] wrapped = Unprotect(stored.Substring(legacyPrefix.Length));
+                try { return DecryptCipher(Encoding.UTF8.GetChars(wrapped)); } finally { Array.Clear(wrapped, 0, wrapped.Length); }
+            }
+            return DecryptCipher(stored.ToCharArray());
+        }
+        public static SqlSession DecodeFileBytes(byte[] stored, string applicationName = null)
+        {
+            using (var content = DpapiConnectionFile.Read(stored))
+            {
+                byte[] plain = null; char[] characters = null;
+                try
+                {
+                    if (content.Kind == DpapiContentKind.LegacyCipher)
+                        plain = DecryptCipher(Encoding.UTF8.GetChars(content.Data));
+                    else if (content.Kind == DpapiContentKind.SqlConnection)
+                        plain = (byte[])content.Data.Clone();
+                    else throw new InvalidDataException("File không chứa cấu hình kết nối SQL.");
+                    characters = Encoding.UTF8.GetChars(plain);
+                    return Parse(characters, applicationName);
+                }
+                finally { if (plain != null) Array.Clear(plain, 0, plain.Length); if (characters != null) Array.Clear(characters, 0, characters.Length); }
+            }
+        }
+        private static byte[] Unprotect(string text)
+        {
+            byte[] cipher = Convert.FromBase64String(text);
+            try { return ProtectedData.Unprotect(cipher, null, DataProtectionScope.LocalMachine); } finally { Array.Clear(cipher, 0, cipher.Length); }
+        }
+        private static byte[] DecryptCipher(char[] text)
+        {
+            byte[] cipher = null, key = null;
+            try
+            {
+                // Legacy DLL accepts plaintext SQL when a semicolon is present.
+                if (Array.IndexOf(text, ';') >= 0) return Encoding.UTF8.GetBytes(text);
+                for (int i = 0; i < text.Length; i++) { if (text[i] == '_') text[i] = '+'; else if (text[i] == '-') text[i] = '/'; else if (text[i] == '$') text[i] = '='; }
+                cipher = Convert.FromBase64CharArray(text, 0, text.Length);
+                using (var derive = new PasswordDeriveBytes(PassPhrase, null)) key = derive.GetBytes(32);
+                // Framework PKCS7 unpadding allocates a discarded plaintext array.
+                // Decrypt without unpadding and clear both application-owned arrays explicitly.
+                using (var aes = new RijndaelManaged { Mode = CipherMode.CBC, Padding=PaddingMode.None })
+                using (var decryptor = aes.CreateDecryptor(key, Iv))
+                {
+                    byte[] padded=decryptor.TransformFinalBlock(cipher,0,cipher.Length);
+                    try
+                    {
+                        if(padded.Length==0)throw new CryptographicException("Invalid legacy ciphertext.");
+                        int padding=padded[padded.Length-1];if(padding<1||padding>16||padding>padded.Length)throw new CryptographicException("Invalid legacy padding.");
+                        int invalid=0;for(int i=0;i<padding;i++)invalid|=padded[padded.Length-1-i]^padding;
+                        if(invalid!=0)throw new CryptographicException("Invalid legacy padding.");
+                        byte[] plain=new byte[padded.Length-padding];Buffer.BlockCopy(padded,0,plain,0,plain.Length);return plain;
+                    }
+                    finally{Array.Clear(padded,0,padded.Length);}
+                }
+            }
+            finally { Array.Clear(text, 0, text.Length); if (cipher != null) Array.Clear(cipher, 0, cipher.Length); if (key != null) Array.Clear(key, 0, key.Length); }
+        }
+        public static SqlSession Parse(char[] text, string applicationName = null)
+        {
+            var builder = new SqlConnectionStringBuilder(); string user = "";
+            using (var password = new SecureString())
+            {
+                int position = 0;
+                while (position < text.Length)
+                {
+                    while (position < text.Length && (char.IsWhiteSpace(text[position]) || text[position] == ';')) position++;
+                    if (position == text.Length) break;
+                    int begin = position;
+                    while (position < text.Length && text[position] != '=' && text[position] != ';') position++;
+                    if (position == text.Length || text[position] != '=') throw new ArgumentException("Invalid connection option.");
+                    string name = new string(text, begin, position - begin).Trim(); position++;
+                    while (position < text.Length && char.IsWhiteSpace(text[position])) position++;
+                    char quote = position < text.Length && (text[position] == '\'' || text[position] == '"') ? text[position++] : '\0';
+                    char[] value = new char[text.Length]; int length=0; bool closed = quote == '\0';
+                    try
+                    {
+                        while (position < text.Length)
+                        {
+                            char c = text[position++];
+                            if (quote != '\0' && c == quote)
+                            {
+                                if (position < text.Length && text[position] == quote) { position++; value[length++]=c; continue; }
+                                closed = true; break;
+                            }
+                            if (quote == '\0' && c == ';') break; value[length++]=c;
+                        }
+                        if (!closed) throw new ArgumentException("Unclosed connection value.");
+                        if (quote != '\0') { while (position < text.Length && char.IsWhiteSpace(text[position])) position++; if (position < text.Length && text[position] != ';') throw new ArgumentException("Invalid quoted value."); }
+                        if (quote == '\0') { while (length > 0 && char.IsWhiteSpace(value[length - 1])) value[--length]='\0'; }
+                        bool isPassword = name.Equals("Password", StringComparison.OrdinalIgnoreCase) || name.Equals("Pwd", StringComparison.OrdinalIgnoreCase);
+                        if (isPassword) { password.Clear(); for(int index=0;index<length;index++)password.AppendChar(value[index]); }
+                        else
+                        {
+                            char[] chars = new char[length]; Array.Copy(value,chars,length);
+                            try { string option = new string(chars); if (name.Equals("User ID", StringComparison.OrdinalIgnoreCase) || name.Equals("UID", StringComparison.OrdinalIgnoreCase) || name.Equals("User", StringComparison.OrdinalIgnoreCase)) user = option; else builder[name] = option; }
+                            finally { Array.Clear(chars, 0, chars.Length); }
+                        }
+                    }
+                    finally { Array.Clear(value,0,value.Length); }
+                }
+                builder.PersistSecurityInfo = false;
+                if (applicationName != null) builder.ApplicationName = applicationName.Length > 128 ? applicationName.Substring(0, 128) : applicationName;
+                password.MakeReadOnly(); return new SqlSession(builder.ConnectionString, user, password);
+            }
+        }
+    }
+}

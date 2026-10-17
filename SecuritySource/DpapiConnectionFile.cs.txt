@@ -1,0 +1,124 @@
+using System;
+using System.IO;
+using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
+
+namespace __DAL_NAMESPACE__.Security
+{
+    public enum DpapiContentKind : byte { LegacyCipher = 1, SqlConnection = 2, UpdateSettings = 3 }
+
+    public sealed class DpapiContent : IDisposable
+    {
+        public DpapiContentKind Kind { get; private set; }
+        public byte[] Data { get; private set; }
+        internal DpapiContent(DpapiContentKind kind, byte[] data) { Kind = kind; Data = data; }
+        public void Dispose() { if (Data != null) { Array.Clear(Data, 0, Data.Length); Data = null; } }
+    }
+
+    // Wire format shared with the updater. The entire header and payload are inside DPAPI.
+    public static class DpapiConnectionFile
+    {
+        private static readonly string[] Prefixes = { "DPAPI-LM-V1:", "DPAPI-SQL-LM-V1:", "DPAPI-UPDATE-LM-V1:" };
+
+        public static bool IsBinary(byte[] file)
+        {
+            return LegacyPrefixIndex(file) < 0;
+        }
+
+        private static int LegacyPrefixIndex(byte[] file)
+        {
+            if (file == null || file.Length == 0) throw new InvalidDataException("File cấu hình DPAPI trống.");
+            int offset = file.Length >= 3 && file[0] == 239 && file[1] == 187 && file[2] == 191 ? 3 : 0;
+            while (offset < file.Length && (file[offset] == 32 || file[offset] == 9 || file[offset] == 13 || file[offset] == 10)) offset++;
+            for (int i = 0; i < Prefixes.Length; i++)
+            {
+                string prefix = Prefixes[i];
+                if (file.Length - offset < prefix.Length) continue;
+                int j = 0; while (j < prefix.Length && file[offset + j] == prefix[j]) j++;
+                if (j == prefix.Length) return i;
+            }
+            return -1;
+        }
+
+        public static DpapiContent Read(byte[] file)
+        {
+            int legacy = LegacyPrefixIndex(file);
+            if (legacy >= 0)
+            {
+                string text = Encoding.UTF8.GetString(file).TrimStart('\uFEFF').Trim();
+                byte[] encrypted = Convert.FromBase64String(text.Substring(Prefixes[legacy].Length));
+                try { return new DpapiContent((DpapiContentKind)(legacy + 1), ProtectedData.Unprotect(encrypted, null, DataProtectionScope.LocalMachine)); }
+                finally { Array.Clear(encrypted, 0, encrypted.Length); }
+            }
+            byte[] plain = ProtectedData.Unprotect(file, null, DataProtectionScope.LocalMachine);
+            try
+            {
+                if (plain.Length <= 8 || plain[0] != 'H' || plain[1] != 'P' || plain[2] != 'D' || plain[3] != 'P'
+                    || plain[4] != 1 || plain[5] < 1 || plain[5] > 3 || plain[6] != 0 || plain[7] != 0)
+                    throw new InvalidDataException("Phiên bản hoặc loại cấu hình DPAPI không hợp lệ.");
+                byte[] data = new byte[plain.Length - 8];
+                Buffer.BlockCopy(plain, 8, data, 0, data.Length);
+                return new DpapiContent((DpapiContentKind)plain[5], data);
+            }
+            finally { Array.Clear(plain, 0, plain.Length); }
+        }
+
+        public static byte[] Protect(DpapiContentKind kind, byte[] data)
+        {
+            if (kind < DpapiContentKind.LegacyCipher || kind > DpapiContentKind.UpdateSettings || data == null || data.Length == 0)
+                throw new ArgumentException("Nội dung cấu hình DPAPI không hợp lệ.");
+            byte[] plain = new byte[8 + data.Length];
+            plain[0] = (byte)'H'; plain[1] = (byte)'P'; plain[2] = (byte)'D'; plain[3] = (byte)'P'; plain[4] = 1; plain[5] = (byte)kind;
+            Buffer.BlockCopy(data, 0, plain, 8, data.Length);
+            try { return ProtectedData.Protect(plain, null, DataProtectionScope.LocalMachine); }
+            finally { Array.Clear(plain, 0, plain.Length); }
+        }
+
+        public static void WriteAtomic(string path, byte[] encoded, Action<string> validate, Action<string> permissions = null)
+        {
+            if (validate == null) throw new ArgumentNullException("validate");
+            string temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            string backup = temporary + ".bak";
+            bool replaced = false, complete = false, hadOriginal = false;
+            try
+            {
+                using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None)) { }
+                if (permissions != null) permissions(temporary);
+                File.WriteAllBytes(temporary, encoded);
+                if (!File.ReadAllBytes(temporary).SequenceEqual(encoded)) throw new IOException("Kiểm tra file cấu hình thất bại.");
+                validate(temporary);
+                hadOriginal = File.Exists(path);
+                if (hadOriginal)
+                {
+                    if (permissions != null) permissions(path);
+                    File.Replace(temporary, path, backup);
+                }
+                else File.Move(temporary, path);
+                replaced = true;
+                if (permissions != null) permissions(path);
+                if (!File.ReadAllBytes(path).SequenceEqual(encoded)) throw new IOException("Kiểm tra file cấu hình sau khi lưu thất bại.");
+                validate(path);
+                complete = true;
+            }
+            catch (Exception original)
+            {
+                if (replaced)
+                {
+                    try
+                    {
+                        if (hadOriginal && File.Exists(backup)) File.Replace(backup, path, null);
+                        else if (!hadOriginal && File.Exists(path)) File.Delete(path);
+                    }
+                    catch { throw new IOException("Không hoàn tất lưu cấu hình. Bản sao cấu hình cũ được giữ trong tệp .bak để khôi phục.", original); }
+                }
+                throw;
+            }
+            finally
+            {
+                try { if (File.Exists(temporary)) File.Delete(temporary); } catch { }
+                if (complete) { try { if (File.Exists(backup)) File.Delete(backup); } catch { } }
+            }
+        }
+    }
+}

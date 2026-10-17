@@ -1,0 +1,14 @@
+using System;
+namespace __DAL_NAMESPACE__.Security
+{
+    public static class AuditRedaction
+    {
+        public static string Value(string name, object value)
+        {
+            string normalized=(name??"").ToLowerInvariant();
+            foreach(string marker in new[]{"password","pwd","pass","matkhau","token","secret","privatekey","apikey","connectionstring","hash"})
+                if(normalized.Contains(marker))return "[REDACTED]";
+            return value==null||value==DBNull.Value?"":value.ToString();
+        }
+    }
+}

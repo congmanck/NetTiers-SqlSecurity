@@ -1,0 +1,845 @@
+--- a/DataAccessLayer.SqlClient/SqlEntityProviderBase.generated.cst
++++ b/DataAccessLayer.SqlClient/SqlEntityProviderBase.generated.cst
+@@ -160,7 +160,7 @@
+ 	/// <param name="providerInvariantName">Name of the invariant provider use by the DbProviderFactory.</param>
+ 	public <%=abstractRepositoryClassName%>(string connectionString, bool useStoredProcedure, string providerInvariantName)
+ 	{
+-		this._connectionString = connectionString;
++		this._connectionString = <%= DALNameSpace %>.Security.SqlSessions.ProtectReference(connectionString);
+ 		this._useStoredProcedure = useStoredProcedure;
+ 		this._providerInvariantName = providerInvariantName;
+ 	}
+@@ -174,8 +174,8 @@
+     /// <value>The connection string.</value>
+     public string ConnectionString
+ 	{
+-		get {return this._connectionString;}
+-		set {this._connectionString = value;}
++		get {return <%= DALNameSpace %>.Security.SqlSessions.ExportLegacy(this._connectionString);}
++		set {this._connectionString = <%= DALNameSpace %>.Security.SqlSessions.ProtectReference(value);}
+ 	}
+ 	
+ 	/// <summary>
+@@ -240,7 +240,7 @@
+ 		/// <returns>Returns a <c><%=listName%></c> of <%=GetClassName(primaryTable)%> objects.</returns>
+ 		public override <%=GetClassName(primaryTable, ClassNameFormat.Collection)%> GetBy<%=functionname%>(TransactionManager transactionManager, <%=GetFunctionHeaderParameters(junctionTableKey.ForeignKeyMemberColumns)%>, int start, int pageLength, out int count)
+ 		{
+-			SqlDatabase database = new SqlDatabase(this._connectionString);
++			SqlDatabase database = new <%= DALNameSpace %>.Security.SecureSqlDatabase(this._connectionString);
+ 			DbCommand commandWrapper = StoredProcedureProvider.GetCommandWrapper(database, "<%=owner + ProcedurePrefix + commandStem + SelectSuffix + "By" + functionname%>", _useStoredProcedure);
+ 			
+ 			<% foreach(ColumnSchema col in junctionTableKey.ForeignKeyMemberColumns) { %>
+@@ -319,7 +319,7 @@
+ 		<%}%>
+ 		public override bool <%= MethodNames.Delete %>(TransactionManager transactionManager, <%= GetFunctionHeaderParameters(SourceTable.PrimaryKey.MemberColumns) %><% if(RowVersion != null && !RowVersion.IsPrimaryKeyMember) {Response.Write(", byte[] " + GetFieldName(RowVersion));}%>)
+ 		{
+-			SqlDatabase database = new SqlDatabase(this._connectionString);
++			SqlDatabase database = new <%= DALNameSpace %>.Security.SecureSqlDatabase(this._connectionString);
+ 			DbCommand commandWrapper = StoredProcedureProvider.GetCommandWrapper(database, "<%=owner + ProcedurePrefix + commandStem + DeleteSuffix%>", _useStoredProcedure);
+ 			<% for(int i = 0; i < SourceTable.PrimaryKey.MemberColumns.Count; i++) { 
+ 				ColumnSchema col = SourceTable.PrimaryKey.MemberColumns[i];
+@@ -396,7 +396,7 @@
+ 			if (whereClause.IndexOf(";") > -1)
+ 				return new <%=collectionClassName%>();
+ 	
+-			SqlDatabase database = new SqlDatabase(this._connectionString);
++			SqlDatabase database = new <%= DALNameSpace %>.Security.SecureSqlDatabase(this._connectionString);
+ 			DbCommand commandWrapper = StoredProcedureProvider.GetCommandWrapper(database, "<%=owner + ProcedurePrefix + commandStem + FindSuffix%>", _useStoredProcedure);
+ 
+ 		bool searchUsingOR = false;
+@@ -511,7 +511,7 @@
+ 			else 
+ 				filter = parameters.GetParameters();
+ 				
+-			SqlDatabase database = new SqlDatabase(this._connectionString);
++			SqlDatabase database = new <%= DALNameSpace %>.Security.SecureSqlDatabase(this._connectionString);
+ 			DbCommand commandWrapper = StoredProcedureProvider.GetCommandWrapper(database, "<%= owner + ProcedurePrefix + commandStem + FindSuffix %>_Dynamic", typeof(<%= GetClassName(SourceTable, ClassNameFormat.Column) %>), filter, orderBy, start, pageLength);
+ 		
+ 			SqlFilterParameter param;
+@@ -591,7 +591,7 @@
+         /// <exception cref="System.Data.Common.DbException">The command could not be executed.</exception>
+ 		public override <%=collectionClassName%> <%= MethodNames.GetAll %>(TransactionManager transactionManager, int start, int pageLength, out int count)
+ 		{
+-			SqlDatabase database = new SqlDatabase(this._connectionString);
++			SqlDatabase database = new <%= DALNameSpace %>.Security.SecureSqlDatabase(this._connectionString);
+ 			DbCommand commandWrapper = StoredProcedureProvider.GetCommandWrapper(database, "<%=owner + ProcedurePrefix + commandStem + SelectSuffix + SelectAllSuffix%>", _useStoredProcedure);
+ 			
+ 			IDataReader reader = null;
+@@ -653,7 +653,7 @@
+ 		/// <returns>Returns a typed collection of <%=className%> objects.</returns>
+ 		public override <%=collectionClassName%> <%= MethodNames.GetPaged %>(TransactionManager transactionManager, string whereClause, string orderBy, int start, int pageLength, out int count)
+ 		{
+-			SqlDatabase database = new SqlDatabase(this._connectionString);
++			SqlDatabase database = new <%= DALNameSpace %>.Security.SecureSqlDatabase(this._connectionString);
+ 			DbCommand commandWrapper = StoredProcedureProvider.GetCommandWrapper(database, "<%=owner + ProcedurePrefix + commandStem + SelectSuffix + "Paged"%>", _useStoredProcedure);
+ 		
+ 			
+@@ -755,7 +755,7 @@
+         /// <exception cref="System.Data.Common.DbException">The command could not be executed.</exception>
+ 		public override <%=collectionClassName%> GetBy<%=GetKeysName(fkeys[j].ForeignKeyMemberColumns)%>(TransactionManager transactionManager, <%= GetFunctionHeaderParameters(fkeys[j].ForeignKeyMemberColumns) %>, int start, int pageLength, out int count)
+ 		{
+-			SqlDatabase database = new SqlDatabase(this._connectionString);
++			SqlDatabase database = new <%= DALNameSpace %>.Security.SecureSqlDatabase(this._connectionString);
+ 			DbCommand commandWrapper = StoredProcedureProvider.GetCommandWrapper(database, "<%=owner + GetProcNameForGetByIX(ProcedurePrefix + commandStem + SelectSuffix + "By", fkeys[j].ForeignKeyMemberColumns)%>", _useStoredProcedure);
+ 			
+ 			<% foreach(ColumnSchema col in fkeys[j].ForeignKeyMemberColumns) { %>
+@@ -862,7 +862,7 @@
+         /// <exception cref="System.Data.Common.DbException">The command could not be executed.</exception>
+ 		public override <%=returnType%> GetBy<%=GetKeysName(indexes[j].MemberColumns)%>(TransactionManager transactionManager, <%= GetFunctionHeaderParameters(indexes[j].MemberColumns) %>, int start, int pageLength, out int count)
+ 		{
+-			SqlDatabase database = new SqlDatabase(this._connectionString);
++			SqlDatabase database = new <%= DALNameSpace %>.Security.SecureSqlDatabase(this._connectionString);
+ 			DbCommand commandWrapper = StoredProcedureProvider.GetCommandWrapper(database, "<%=owner + GetProcNameForGetByIX(ProcedurePrefix + commandStem + SelectSuffix + "By", indexes[j].MemberColumns)%>", _useStoredProcedure);
+ 			
+ 			<% foreach(ColumnSchema col in indexes[j].MemberColumns) { %>
+@@ -1030,7 +1030,7 @@
+         /// <exception cref="System.Data.Common.DbException">The command could not be executed.</exception>
+ 		public override bool <%= MethodNames.Insert %>(TransactionManager transactionManager, <%=className%> entity)
+ 		{
+-			SqlDatabase database = new SqlDatabase(this._connectionString);
++			SqlDatabase database = new <%= DALNameSpace %>.Security.SecureSqlDatabase(this._connectionString);
+ 			DbCommand commandWrapper = StoredProcedureProvider.GetCommandWrapper(database, "<%=owner + ProcedurePrefix + commandStem + InsertSuffix %>", _useStoredProcedure);
+ 			
+ 			<%			
+@@ -1151,7 +1151,7 @@
+ 		<%}%>
+ 		public override bool <%= MethodNames.Update %>(TransactionManager transactionManager, <%=className%> entity)
+ 		{
+-			SqlDatabase database = new SqlDatabase(this._connectionString);
++			SqlDatabase database = new <%= DALNameSpace %>.Security.SecureSqlDatabase(this._connectionString);
+ 			DbCommand commandWrapper = StoredProcedureProvider.GetCommandWrapper(database, "<%=owner + ProcedurePrefix + commandStem + UpdateSuffix %>", _useStoredProcedure);
+ 			
+ 			<%		
+@@ -1305,7 +1305,7 @@
+ 		/// <returns>A <see cref="<%=returnTypeForComment%>"/> instance.</returns><%}%>
+ 		public override <%= returnType %> <%=methodName%>(TransactionManager transactionManager, int start, int pageLength <%=TransformStoredProcedureInputsToMethod(true, command.InputParameters) + TransformStoredProcedureOutputsToMethod(true, command.AllOutputParameters)%>)
+ 		{
+-			SqlDatabase database = new SqlDatabase(this._connectionString);
++			SqlDatabase database = new <%= DALNameSpace %>.Security.SecureSqlDatabase(this._connectionString);
+ 			DbCommand commandWrapper = StoredProcedureProvider.GetCommandWrapper(database, "<%= GetOwnerName(command, true) %><%=GetSafeName(command.Name)%>", true);
+ 			
+ 		<% foreach(ParameterSchema col in command.InputParameters)	{%>			
+--- a/DataAccessLayer.SqlClient/SqlNetTiersProvider.cst
++++ b/DataAccessLayer.SqlClient/SqlNetTiersProvider.cst
+@@ -114,7 +114,7 @@
+ 			#region ConnectionString
+ 
+ 			// Initialize _connectionString
+-			_connectionString = config["connectionString"];
++			_connectionString = <%= DALNameSpace %>.Security.SqlSessions.ProtectReference(config["connectionString"]);
+ 			config.Remove("connectionString");
+             
+             if (string.IsNullOrWhiteSpace(_connectionString))
+@@ -179,8 +179,8 @@
+         /// <value>The connection string.</value>
+ 		public string ConnectionString
+ 		{
+-			get {return this._connectionString;}
+-			set {this._connectionString = value;}
++			get {return <%= DALNameSpace %>.Security.SqlSessions.ExportLegacy(this._connectionString);}
++			set {this._connectionString = <%= DALNameSpace %>.Security.SqlSessions.ProtectReference(value);}
+ 		}
+ 		
+ 		/// <summary>
+@@ -307,7 +307,7 @@
+ 		/// <returns></returns>
+ 		public override int ExecuteNonQuery(string storedProcedureName, params object[] parameterValues)
+ 		{
+-			SqlDatabase database = new SqlDatabase(this._connectionString);
++			SqlDatabase database = new <%= DALNameSpace %>.Security.SecureSqlDatabase(this._connectionString);
+ 			return database.ExecuteNonQuery(storedProcedureName, parameterValues);	
+ 		}
+ 
+@@ -320,7 +320,7 @@
+ 		/// <returns></returns>
+ 		public override int ExecuteNonQuery(TransactionManager transactionManager, string storedProcedureName, params object[] parameterValues)
+ 		{
+-			SqlDatabase database = new SqlDatabase(this._connectionString);
++			SqlDatabase database = new <%= DALNameSpace %>.Security.SecureSqlDatabase(this._connectionString);
+ 			return database.ExecuteNonQuery(transactionManager.TransactionObject, storedProcedureName, parameterValues);	
+ 		}
+ 
+@@ -330,7 +330,7 @@
+ 		/// <param name="commandWrapper">The command wrapper.</param>
+ 		public override void ExecuteNonQuery(DbCommand commandWrapper)
+ 		{
+-			SqlDatabase database = new SqlDatabase(this._connectionString);
++			SqlDatabase database = new <%= DALNameSpace %>.Security.SecureSqlDatabase(this._connectionString);
+ 			database.ExecuteNonQuery(commandWrapper);	
+ 			
+ 		}
+@@ -342,7 +342,7 @@
+ 		/// <param name="commandWrapper">The command wrapper.</param>
+ 		public override void ExecuteNonQuery(TransactionManager transactionManager, DbCommand commandWrapper)
+ 		{
+-			SqlDatabase database = new SqlDatabase(this._connectionString);
++			SqlDatabase database = new <%= DALNameSpace %>.Security.SecureSqlDatabase(this._connectionString);
+ 			database.ExecuteNonQuery(commandWrapper, transactionManager.TransactionObject);	
+ 		}
+ 
+@@ -355,7 +355,7 @@
+ 		/// <returns></returns>
+ 		public override int ExecuteNonQuery(CommandType commandType, string commandText)
+ 		{
+-			SqlDatabase database = new SqlDatabase(this._connectionString);
++			SqlDatabase database = new <%= DALNameSpace %>.Security.SecureSqlDatabase(this._connectionString);
+ 			return database.ExecuteNonQuery(commandType, commandText);	
+ 		}
+ 		/// <summary>
+@@ -381,7 +381,7 @@
+ 		/// <returns></returns>
+ 		public override IDataReader ExecuteReader(string storedProcedureName, params object[] parameterValues)
+ 		{
+-			SqlDatabase database = new SqlDatabase(this._connectionString);			
++			SqlDatabase database = new <%= DALNameSpace %>.Security.SecureSqlDatabase(this._connectionString);			
+ 			return database.ExecuteReader(storedProcedureName, parameterValues);	
+ 		}
+ 
+@@ -405,7 +405,7 @@
+ 		/// <returns></returns>
+ 		public override IDataReader ExecuteReader(DbCommand commandWrapper)
+ 		{
+-			SqlDatabase database = new SqlDatabase(this._connectionString);			
++			SqlDatabase database = new <%= DALNameSpace %>.Security.SecureSqlDatabase(this._connectionString);			
+ 			return database.ExecuteReader(commandWrapper);	
+ 		}
+ 
+@@ -430,7 +430,7 @@
+ 		/// <returns></returns>
+ 		public override IDataReader ExecuteReader(CommandType commandType, string commandText)
+ 		{
+-			SqlDatabase database = new SqlDatabase(this._connectionString);
++			SqlDatabase database = new <%= DALNameSpace %>.Security.SecureSqlDatabase(this._connectionString);
+ 			return database.ExecuteReader(commandType, commandText);	
+ 		}
+ 		/// <summary>
+@@ -456,7 +456,7 @@
+ 		/// <returns></returns>
+ 		public override DataSet ExecuteDataSet(string storedProcedureName, params object[] parameterValues)
+ 		{
+-			SqlDatabase database = new SqlDatabase(this._connectionString);			
++			SqlDatabase database = new <%= DALNameSpace %>.Security.SecureSqlDatabase(this._connectionString);			
+ 			return database.ExecuteDataSet(storedProcedureName, parameterValues);	
+ 		}
+ 
+@@ -480,7 +480,7 @@
+ 		/// <returns></returns>
+ 		public override DataSet ExecuteDataSet(DbCommand commandWrapper)
+ 		{
+-			SqlDatabase database = new SqlDatabase(this._connectionString);			
++			SqlDatabase database = new <%= DALNameSpace %>.Security.SecureSqlDatabase(this._connectionString);			
+ 			return database.ExecuteDataSet(commandWrapper);	
+ 		}
+ 
+@@ -505,7 +505,7 @@
+ 		/// <returns></returns>
+ 		public override DataSet ExecuteDataSet(CommandType commandType, string commandText)
+ 		{
+-			SqlDatabase database = new SqlDatabase(this._connectionString);
++			SqlDatabase database = new <%= DALNameSpace %>.Security.SecureSqlDatabase(this._connectionString);
+ 			return database.ExecuteDataSet(commandType, commandText);	
+ 		}
+ 		/// <summary>
+@@ -531,7 +531,7 @@
+ 		/// <returns></returns>
+ 		public override object ExecuteScalar(string storedProcedureName, params object[] parameterValues)
+ 		{
+-			SqlDatabase database = new SqlDatabase(this._connectionString);			
++			SqlDatabase database = new <%= DALNameSpace %>.Security.SecureSqlDatabase(this._connectionString);			
+ 			return database.ExecuteScalar(storedProcedureName, parameterValues);	
+ 		}
+ 
+@@ -555,7 +555,7 @@
+ 		/// <returns></returns>
+ 		public override object ExecuteScalar(DbCommand commandWrapper)
+ 		{
+-			SqlDatabase database = new SqlDatabase(this._connectionString);			
++			SqlDatabase database = new <%= DALNameSpace %>.Security.SecureSqlDatabase(this._connectionString);			
+ 			return database.ExecuteScalar(commandWrapper);	
+ 		}
+ 
+@@ -579,7 +579,7 @@
+ 		/// <returns></returns>
+ 		public override object ExecuteScalar(CommandType commandType, string commandText)
+ 		{
+-			SqlDatabase database = new SqlDatabase(this._connectionString);
++			SqlDatabase database = new <%= DALNameSpace %>.Security.SecureSqlDatabase(this._connectionString);
+ 			return database.ExecuteScalar(commandType, commandText);	
+ 		}
+ 		/// <summary>
+--- a/DataAccessLayer.SqlClient/Views/SqlEntityViewProviderBase.generated.cst
++++ b/DataAccessLayer.SqlClient/Views/SqlEntityViewProviderBase.generated.cst
+@@ -102,7 +102,7 @@
+ 	/// <param name="providerInvariantName">Name of the invariant provider use by the DbProviderFactory.</param>
+ 	public <%=providerBaseName%>(string connectionString, bool useStoredProcedure, string providerInvariantName)
+ 	{
+-		this._connectionString = connectionString;
++		this._connectionString = <%= DALNameSpace %>.Security.SqlSessions.ProtectReference(connectionString);
+ 		this._useStoredProcedure = useStoredProcedure;
+ 		this._providerInvariantName = providerInvariantName;
+ 	}
+@@ -116,8 +116,8 @@
+     /// <value>The connection string.</value>
+     public string ConnectionString
+ 	{
+-		get {return this._connectionString;}
+-		set {this._connectionString = value;}
++		get {return <%= DALNameSpace %>.Security.SqlSessions.ExportLegacy(this._connectionString);}
++		set {this._connectionString = <%= DALNameSpace %>.Security.SqlSessions.ProtectReference(value);}
+ 	}
+ 	
+ 	/// <summary>
+@@ -161,7 +161,7 @@
+ 	/// <returns>Returns a typed collection of <%=className%> objects.</returns>
+ 	public override <%=collectionClassName%> <%= MethodNames.GetAll %>(TransactionManager transactionManager, int start, int pageLength, out int count)
+ 	{
+-		SqlDatabase database = new SqlDatabase(this._connectionString);
++		SqlDatabase database = new <%= DALNameSpace %>.Security.SecureSqlDatabase(this._connectionString);
+ 		DbCommand commandWrapper = StoredProcedureProvider.GetCommandWrapper(database, "<%=owner + ProcedurePrefix + GetCleanName(name) + SelectSuffix + SelectAllSuffix%>", _useStoredProcedure);
+ 		
+ 		IDataReader reader = null;
+@@ -215,7 +215,7 @@
+ 	/// <returns>Returns a typed collection of <%=className%> objects.</returns>
+ 	public override <%=collectionClassName%> <%= MethodNames.Get %>(TransactionManager transactionManager, string whereClause, string orderBy, int start, int pageLength, out int count)
+ 	{
+-		SqlDatabase database = new SqlDatabase(this._connectionString);
++		SqlDatabase database = new <%= DALNameSpace %>.Security.SecureSqlDatabase(this._connectionString);
+ 		DbCommand commandWrapper = StoredProcedureProvider.GetCommandWrapper(database, "<%=owner + ProcedurePrefix + GetCleanName(name) + SelectSuffix%>", _useStoredProcedure);
+ 
+ 		database.AddInParameter(commandWrapper, "@WhereClause", DbType.String, whereClause);
+@@ -290,7 +290,7 @@
+ 		else 
+ 			filter = parameters.GetParameters();
+ 			
+-		SqlDatabase database = new SqlDatabase(this._connectionString);
++		SqlDatabase database = new <%= DALNameSpace %>.Security.SecureSqlDatabase(this._connectionString);
+ 		DbCommand commandWrapper = StoredProcedureProvider.GetCommandWrapper(database, "<%=owner + ProcedurePrefix + GetCleanName(name) + FindSuffix %>_Dynamic", typeof(<%= className %>Column), filter, orderBy, start, pageLength);
+ 		
+ 		SqlFilterParameter param;
+@@ -385,7 +385,7 @@
+ 	/// <returns>A <see cref="<%=returnTypeForComment%>"/> instance.</returns><%}%>
+ 	public override <%=returnType%> <%=methodName%>(TransactionManager transactionManager, int start, int pageLength<%=methodParms%>)
+ 	{
+-		SqlDatabase database = new SqlDatabase(this._connectionString);
++		SqlDatabase database = new <%= DALNameSpace %>.Security.SecureSqlDatabase(this._connectionString);
+ 		DbCommand commandWrapper = StoredProcedureProvider.GetCommandWrapper(database, "<%= GetOwnerName(command, true) %><%=GetSafeName(command.Name)%>", true);
+ 		
+ 		<% foreach(ParameterSchema col in command.InputParameters)	{ %>
+--- a/DataAccessLayer/TransactionManager.cst
++++ b/DataAccessLayer/TransactionManager.cst
+@@ -7,6 +7,274 @@
+ <%@ CodeTemplate Language="C#" TargetLanguage="C#" Description="" ResponseEncoding="UTF-8"  NoWarn="0108,0618,1572,1573,1574,0162,2002"%>
+ <%@ Property Name="DALNameSpace" Type="System.String" Category="Data" Description="Project Namespace." %>
+ <%@ Property Name="ProviderInvariantName" Type="System.String" Category="Options" Optional="False" Description="ProviderInvariantName" %>
++<% if (ProviderInvariantName == "System.Data.SqlClient") { %>
++#region Using directives
++using System;
++using System.Data;
++using System.Data.Common;
++
++using System.Diagnostics;
++using Microsoft.Practices.EnterpriseLibrary.Data;
++using Microsoft.Practices.EnterpriseLibrary.Data.Sql;
++
++#endregion Using directives
++
++namespace <%= DALNameSpace %>
++{
++	/// <summary>
++	/// TransactionManager is utility class that decorates a <see cref="IDbTransaction"/> instance.
++	/// </summary>
++	public class TransactionManager : ITransactionManager, IDisposable
++	{
++		#region Fields
++		private Database _database;
++		
++		private DbConnection _connection;
++		private DbTransaction _transaction;
++
++		private string _connectionString;
++		private string _invariantProviderName;
++		private bool _transactionOpen = false;	
++		
++		private bool disposed;
++        private <%= DALNameSpace %>.Security.SqlLease sqlLease;
++        private static object syncRoot = new object();
++
++		#endregion
++
++		#region Properties
++		/// <summary>
++		///	Gets or sets the configuration key for database service.
++		/// </summary>
++		/// <remark>Do not change during a transaction.</remark>
++        /// <exception cref="InvalidOperationException">
++		/// If an attempt to set when the connection is currently open.
++		/// </exception>
++		public string ConnectionString
++		{
++				get { return <%= DALNameSpace %>.Security.SqlSessions.ExportLegacy(this._connectionString); }
++			set
++			{
++				//make sure transaction is open
++				if ( this.IsOpen )
++				{
++					throw new InvalidOperationException( "Database cannot be changed during a transaction" );
++				}
++				
++        		this._connectionString = <%= DALNameSpace %>.Security.SqlSessions.ProtectReference(value);
++				if ( !string.IsNullOrEmpty(this._connectionString) && !string.IsNullOrEmpty(this._invariantProviderName) )
++				{
++					InitializeDatabase();
++				}
++			}
++		}
++		
++		/// <summary>
++		/// Gets or sets the name of the invariant provider.
++		/// </summary>
++		/// <value>The name of the invariant provider.</value>
++		public string InvariantProviderName
++		{
++			get { return this._invariantProviderName; }
++			set
++			{
++				if ( this.IsOpen )
++				{
++					throw new InvalidOperationException( "Database cannot be changed during a transaction" );
++				}
++
++				this._invariantProviderName = value;
++				if ( !string.IsNullOrEmpty(this._connectionString) && !string.IsNullOrEmpty(this._invariantProviderName) )
++				{
++					InitializeDatabase();
++				}
++			}
++		}
++		
++		/// <summary>
++		/// Gets the <see cref="Database"/> instance.
++		/// </summary>
++		/// <value></value>
++		public Database Database
++		{
++			get {return this._database;}
++		}
++
++		/// <summary>
++		///	Gets the underlying <see cref="DbTransaction"/> object.
++		/// </summary>
++		public DbTransaction TransactionObject
++		{
++			get { return this._transaction; }
++		}
++
++		/// <summary>
++		///	Gets a value that indicates if a transaction is currently open and operating. 
++		/// </summary>
++		/// <value>Return true if a transaction session is currently open and operating; otherwise false.</value>
++		public bool IsOpen 
++		{
++			get { return this._transactionOpen; }
++		}
++		#endregion Properties
++
++		#region Constructors
++		/// <summary>
++		///	Initializes a new instance of the <see cref="TransactionManager"/> class.
++		/// </summary>
++		internal TransactionManager()
++		{			
++		}
++		
++		/// <summary>
++		///	Initializes a new instance of the <see cref="TransactionManager"/> class.
++		/// </summary>
++		/// <param name="connectionString">The connection string to the database.</param>
++		public TransactionManager( string connectionString ) : this( connectionString, "System.Data.SqlClient" )
++		{
++    	}
++		
++		/// <summary>
++		///	Initializes a new instance of the <see cref="TransactionManager"/> class.
++		/// </summary>
++		/// <param name="connectionString">The connection string to the database.</param>
++		/// <param name="providerInvariantName">Name of the provider invariant.</param>
++		public TransactionManager( string connectionString, string providerInvariantName )
++		{
++    		this._connectionString = <%= DALNameSpace %>.Security.SqlSessions.ProtectReference(connectionString);
++      		this._invariantProviderName = providerInvariantName;
++			InitializeDatabase();
++		}
++		#endregion Constructors
++		
++		private void InitializeDatabase()
++        {
++            if (_connection != null) _connection.Dispose();
++            if (sqlLease != null) sqlLease.Dispose();
++            sqlLease = <%= DALNameSpace %>.Security.SqlSessions.Acquire(_connectionString);
++            _database = new <%= DALNameSpace %>.Security.SecureSqlDatabase(_connectionString);
++            _connection = sqlLease.CreateConnection();
++        }
++        #region Public methods
++		/// <summary>
++		///	Begins a transaction.
++		/// </summary>
++		/// <remarks>The default <see cref="IsolationLevel"/> mode is ReadCommitted</remarks>
++        /// <exception cref="InvalidOperationException">If a transaction is already open.</exception>
++		public void BeginTransaction()
++		{
++			BeginTransaction( IsolationLevel.ReadCommitted );
++		}
++		
++		/// <summary>
++		///	Begins a transaction.
++		/// </summary>
++        /// <param name="isolationLevel">The <see cref="IsolationLevel"/> level of the transaction</param>
++        /// <exception cref="InvalidOperationException">If a transaction is already open.</exception>
++        /// <exception cref="DataException"></exception>
++        /// <exception cref="DbException"></exception>
++		public void BeginTransaction( IsolationLevel isolationLevel )
++		{
++			if( IsOpen )
++			{
++				throw new InvalidOperationException( "Transaction already open." );
++			}
++			
++			//Open connection
++			try
++			{
++				this._connection.Open();
++				this._transaction = this._connection.BeginTransaction( isolationLevel );
++				this._transactionOpen = true;
++			}
++			catch ( Exception )
++			{
++				// in the event of an error, close the connection and destroy the transaction object.
++                if ( this._connection != null ) 
++				{
++					this._connection.Close();
++				}
++				
++                if ( this._transaction != null ) 
++				{	
++					this._transaction.Dispose();
++				}
++				
++				this._transactionOpen = false;
++				throw;
++			}
++		}
++	
++		/// <summary>
++		///	Commit the transaction to the datasource.
++		/// </summary>
++        /// <exception cref="InvalidOperationException">If a transaction is not open.</exception>
++		public void Commit()
++		{
++            if(<%= DALNameSpace %>.Security.SqlSessions.Stopping && this.IsOpen)
++            { this.Rollback(); throw new OperationCanceledException("SQL session is stopping; transaction rolled back."); }
++			if( !this.IsOpen )
++			{
++				throw new InvalidOperationException( "Transaction needs to begin first." );
++			}
++			
++			try
++			{
++				this._transaction.Commit(); // SqlClient could throw Exception or InvalidOperationException
++			}
++			finally
++			{
++				//assuming the commit was sucessful.
++				this._connection.Close();
++				this._transaction.Dispose();
++				this._transactionOpen = false;
++			}
++		}
++
++		/// <summary>
++		///	Rollback the transaction.
++		/// </summary>
++        /// <exception cref="InvalidOperationException">If a transaction is not open.</exception>
++		public void Rollback()
++		{	
++			if( !this.IsOpen )
++			{
++				throw new InvalidOperationException( "Transaction needs to begin first." );			
++			}
++			
++			try
++			{
++				this._transaction.Rollback(); // SqlClient could throw Exception or InvalidOperationException
++			}
++			finally
++			{
++				this._connection.Close();
++				this._transaction.Dispose();
++				this._transactionOpen = false;
++			}
++		}
++		#endregion Public methods		
++		
++		#region IDisposable methods
++        /// <summary>
++        /// Performs application-defined tasks associated with freeing, releasing, or resetting unmanaged resources.
++        /// </summary>
++        public void Dispose()
++        {
++            lock(syncRoot)
++            {
++                if(disposed)return;
++                disposed=true;
++                try { if(IsOpen) Rollback(); }
++                finally { if(_transaction!=null)_transaction.Dispose();if(_connection!=null)_connection.Dispose();if(sqlLease!=null)sqlLease.Dispose(); }
++            }
++        }
++
++		#endregion Public methods		
++	}
++}
++
++<% } else { %>
+ #region Using directives
+ using System;
+ using System.Data;
+@@ -283,3 +551,5 @@
+ 		#endregion Public methods		
+ 	}
+ }
++
++<% } %>
+--- a/DataAccessLayer/DataRepository.cst
++++ b/DataAccessLayer/DataRepository.cst
+@@ -79,6 +79,14 @@
+ 				}
+ 			}
+ 			
++<% if (ProviderInvariantName == "System.Data.SqlClient") { %>
++            lock (_providers.SyncRoot)
++            {
++                if (_providers[provider.Name] != null) _providers.Remove(provider.Name);
++                _providers.Add(provider);
++            }
++
++<% } else { %>
+             if (_providers[provider.Name] == null)
+             {
+                 lock (_providers.SyncRoot)
+@@ -87,6 +95,7 @@
+                 }
+             }
+ 
++<% } %>
+             if (_provider == null || setAsDefault)
+             {
+                 lock (SyncRoot)
+@@ -392,7 +401,7 @@
+ 			/// <param name="connectionString">The provider specific connection information.</param>
+ 			public ConnectionProvider(String connectionStringName, String connectionString)
+ 			{
+-				_connectionString = connectionString;
++				_connectionString = <% if (ProviderInvariantName == "System.Data.SqlClient") { %><%= DALNameSpace %>.Security.SqlSessions.ProtectReference(connectionString)<% } else { %>connectionString<% } %>;
+ 				_connectionStringName = connectionStringName;
+ 			}
+ 
+--- a/DataAccessLayer/Utility.cst
++++ b/DataAccessLayer/Utility.cst
+@@ -440,6 +440,75 @@
+ 		#endregion
+         
+         #region SaveLogHocPhi
++<% if (ProviderInvariantName == "System.Data.SqlClient") { %>
++        static void SaveLogHocPhi(DbCommand dbCommand, string connectionString)
++        {
++            using(var logLease=<%= DALNameSpace %>.Security.SqlSessions.Acquire(connectionString))
++            using(SqlConnection conn=logLease.CreateConnection())
++            using(SqlCommand sqlComm=conn.CreateCommand())
++            {
++            conn.Open();
++            string hostName = System.Net.Dns.GetHostName();
++            string strComm = dbCommand.CommandType==CommandType.StoredProcedure ? dbCommand.CommandText : "[SQL text omitted]";
++            string value = "";
++            
++            for (int i = 0; i < dbCommand.Parameters.Count; i++)
++			{
++                value += "<Error " + dbCommand.Parameters[i].ParameterName + " = \"" + RefreshXmlString(<%= DALNameSpace %>.Security.AuditRedaction.Value(dbCommand.Parameters[i].ParameterName,dbCommand.Parameters[i].Value)) + "\" />";
++            }
++            value = "<Root>" + value + "</Root>";
++              
++            string mac = SafeSubstring(GetMacAddress(), 4, 4);
++			string machine = SafeSubstring(Environment.MachineName, 0, 15);
++			string user = SafeSubstring(Environment.UserName, 0, 15);
++			string ip = SafeSubstring(GetLocalIPAddress()?.Replace(".", ""), 0, 12);
++
++			string ipstr = $"AF8{mac}8{machine}8{user}8{ip}";     
++            
++			string dbName = "AccountsFee";
++
++			sqlComm.CommandType = System.Data.CommandType.Text;
++			sqlComm.CommandText = @"
++INSERT INTO AccountFee_Log.dbo.psc_SystemLog
++(
++    HostName, UserID, Command, Value,
++    UpdateDate, UpdateStaff, IPAddress, DataBaseName
++)
++VALUES
++(
++    @HostName, @UserID, @Command, @Value,
++    GETDATE(), @UpdateStaff, @IPAddress, @DataBaseName
++);";
++
++			sqlComm.Parameters.Clear();
++
++			sqlComm.Parameters.Add("@HostName", System.Data.SqlDbType.NVarChar, -1)
++				.Value = (object)hostName ?? DBNull.Value;
++
++			sqlComm.Parameters.Add("@UserID", System.Data.SqlDbType.NVarChar, -1)
++				.Value = (object)userID ?? DBNull.Value;
++
++			sqlComm.Parameters.Add("@Command", System.Data.SqlDbType.NVarChar, -1)
++				.Value = (object)strComm ?? DBNull.Value;
++
++			sqlComm.Parameters.Add("@Value", System.Data.SqlDbType.NVarChar, -1)
++				.Value = (object)value ?? DBNull.Value;
++
++			sqlComm.Parameters.Add("@UpdateStaff", System.Data.SqlDbType.NVarChar, -1)
++				.Value = (object)userID ?? DBNull.Value;
++
++			sqlComm.Parameters.Add("@IPAddress", System.Data.SqlDbType.NVarChar, -1)
++				.Value = (object)ipstr ?? DBNull.Value;
++
++			sqlComm.Parameters.Add("@DataBaseName", System.Data.SqlDbType.NVarChar, 128)
++				.Value = dbName;
++
++			sqlComm.ExecuteNonQuery();                   
++          
++            }
++        }
++        
++<% } else { %>
+         static void SaveLogHocPhi(DbCommand dbCommand, string connectionString)
+         {
+             SqlConnection conn = new SqlConnection(connectionString);
+@@ -505,6 +574,7 @@
+           
+         }
+         
++<% } %>
+         public static string RefreshXmlString(string value)
+         {
+             try
+--- a/NetTiers.cst
++++ b/NetTiers.cst
+@@ -27,9 +27,9 @@
+ <%@ Property Name="IncludeComponentLayer" Type="MoM.Templates.ComponentPatternType" Category="02. Framework Generation - Optional" Description="The pattern type to implement in the Component Layer." Default="None" %>
+ <%@ Property Name="IncludeWCFDataAttributes" Type="System.Boolean" Default="False" Category="02. Framework Generation - Optional" Description="Indicates if the WCF attributes, [DataContract] and [DataMember], should be included on the entity classes." %>
+ <%@ Property Name="SerializeEntityState" Type="System.Boolean" Default="False" Category="02. Framework Generation - Optional" Description="Indicates if the EntityState property should be included during serialization.  Useful if needing to know what state the entity is in over webservices." %>
+-<%@ Property Name="EntLibVersion" Type="MoM.Templates.EntLibVersion" Default="v5_0" Category="02. Framework Generation - Optional" Description="Indicates the Enterprise Library version to use. Options include v3.1, v5.0" %>
++<%@ Property Name="EntLibVersion" Type="MoM.Templates.EntLibVersion" Default="v3_1" Category="02. Framework Generation - Optional" Description="Indicates the Enterprise Library version to use. Options include v3.1, v5.0" %>
+ <%@ Property Name="VisualStudioVersion" Type="MoM.Templates.VSNetVersion" Default="v2013" Category="02. Framework Generation - Optional" Description="Indicates the Version of Visual Studio to target. Options include v2005, v2008 and v2010" %>
+-<%@ Property Name="DotNetVersion" Type="MoM.Templates.DotNetFrameworkVersion" Default="v4_5" Category="02. Framework Generation - Optional" Description="Indicates the Version of Dot Net to target. Options include v2, v3 and v3.5" %>
++<%@ Property Name="DotNetVersion" Type="MoM.Templates.DotNetFrameworkVersion" Default="v4_5" Category="02. Framework Generation - Optional" Description="SQL security output requires .NET Framework 4.5.2 or later; choose v4_5. Older SQL profiles are promoted to v4_5" %>
+ <%@ Property Name="IncludeXmlAttributes" Type="System.Boolean" Default="False" Category="02. Framework Generation - Optional" Description="Indicates if the Xml attributes, [XmlElement(IsNullable=true)], should be included on the entity classes." %>
+ <%@ Property Name="CustomCodeFolderName" Type="System.String" Category="02. Framework Generation - Optional" Description="If specified, indicates the name of a folder that can contains custom classes to dynamically add to each project." Default="App_Code" %>
+ <%@ Property Name="EqualitySemantics" Type="MoM.Templates.EqualitySemantics" Default="Value" Category="02. Framework Generation - Optional" Description="Equality semantics used for Entity instances.  If 'Reference', default reference type semantics will be used (based on object identity).  If 'Value', Equals() and GetHashCode() will be overridden to use value semantics (based on object contents)." %>
+@@ -800,6 +800,13 @@
+ 		
+ 		#endregion
+ 		
++		if (_netTiersSqlProvider && EntLibVersion != MoM.Templates.EntLibVersion.v3_1)
++			throw new InvalidOperationException("Secure SQL templates require Enterprise Library v3_1. No output should be deployed with another version.");
++
++		// Keep template feature branches consistent with secure SQL project output.
++		if (_netTiersSqlProvider && new System.Version(GetDotNetFrameworkString(DotNetVersion)) < new System.Version("4.5"))
++			DotNetVersion = MoM.Templates.DotNetFrameworkVersion.v4_5;
++
+ 		#region Build Namespaces
+ 		if (BusinessLogicLayerNameSpace == null) BusinessLogicLayerNameSpace = string.Empty;
+ 		string BLLNameSpace = NameSpace + (BusinessLogicLayerNameSpace.Length>0 ? "." + GetCleanName(BusinessLogicLayerNameSpace) : string.Empty);
+@@ -1988,6 +1995,20 @@
+ 			this.GetTemplate("TransactionManager.cst").SetProperty("DALNameSpace", DALNameSpace);
+ 			this.GetTemplate("TransactionManager.cst").SetProperty("ProviderInvariantName", ProviderInvariantName);
+ 			this.RenderToFile("TransactionManager.cst", rootPathDAL + "\\TransactionManager.cs", true);
++            if (_netTiersSqlProvider)
++            {
++                string securityDirectory = Path.Combine(rootPathDAL, "Security");
++                Directory.CreateDirectory(securityDirectory);
++                string[] securityFiles = new string[] { "AuditRedaction.cs","LegacyConnectionDecoder.cs","SecureSqlDatabase.cs","SessionReader.cs","SqlSession.cs" };
++                foreach (string securityFile in securityFiles)
++                {
++                    string sourceFile = Path.Combine(this.CodeTemplateInfo.DirectoryName, "SecuritySource\\" + securityFile + ".txt");
++                    string securityCode = File.ReadAllText(sourceFile).Replace("__DAL_NAMESPACE__", DALNameSpace);
++                    File.WriteAllText(Path.Combine(securityDirectory, securityFile), securityCode, Encoding.UTF8);
++                    AddFileNode(commonNode, "Security\\" + securityFile);
++                }
++            }
++
+             
+             if(EntLibVersion == MoM.Templates.EntLibVersion.v5_0)
+             {
+@@ -2001,6 +2022,7 @@
+ 			}
+ 			
+ 			AddFileNode(commonNode, "DataRepository.cs");
++			this.GetTemplate("DataRepository.cst").SetProperty("ProviderInvariantName", ProviderInvariantName);
+ 			this.GetTemplate("DataRepository.cst").SetProperty("NameSpace", BLLNameSpace);
+ 			this.GetTemplate("DataRepository.cst").SetProperty("DALNameSpace", DALNameSpace);
+ 			this.GetTemplate("DataRepository.cst").SetProperty("SourceTables", templateSourceTables);
+@@ -3052,6 +3074,7 @@
+ 			AddFileNode(commonNode, DALNameSpace + "." + DataAccessLayerNameSpace + ".csproj");
+ 	
+ 			this.GetTemplate(projectTemplate).SetProperty("IncludeBll", false);
++			this.GetTemplate(projectTemplate).SetProperty("ProviderInvariantName", ProviderInvariantName);
+ 			this.GetTemplate(projectTemplate).SetProperty("IncludeDALBase", true);	
+ 			this.GetTemplate(projectTemplate).SetProperty("IncludeSqlClient", false);			
+ 			this.GetTemplate(projectTemplate).SetProperty("IncludeGenericClient", false);	
+--- a/VisualStudio/vsnet2005.project.cst
++++ b/VisualStudio/vsnet2005.project.cst
+@@ -69,9 +69,9 @@
+ 
+ <%@ Property Name="WebServiceUrl" Type="System.String" Category="WebService" Description="The webservice base URL. The asmx filename will be added programmatically." Default="http://localhost/Services/" %>
+ <%@ Property Name="rootPathWS" Type="System.String" Category="WebService" Description="The folder where the webservice code is generated." Default="" %>
+-<%@ Property Name="EntLibVersion" Type="MoM.Templates.EntLibVersion" Default="v5_0" Category="02. Framework Generation - Optional" Description="Indicates the Enterprise Library version to use. Options include v2, v3, v3.1 and v4" %>
++<%@ Property Name="EntLibVersion" Type="MoM.Templates.EntLibVersion" Default="v3_1" Category="02. Framework Generation - Optional" Description="Indicates the Enterprise Library version to use. Options include v2, v3, v3.1 and v4" %>
+ <%@ Property Name="VisualStudioVersion" Type="MoM.Templates.VSNetVersion" Default="v2013" Category="02. Framework Generation - Optional" Description="Indicates the Version of Visual Studio to target. Options include v2005, v2008 and v2010" %>
+-<%@ Property Name="DotNetVersion" Type="MoM.Templates.DotNetFrameworkVersion" Default="v4_5" Category="02. Framework Generation - Optional" Description="Indicates the Version of Dot Net to target. Options include v2, v3 and v3.5" %>
++<%@ Property Name="DotNetVersion" Type="MoM.Templates.DotNetFrameworkVersion" Default="v4_5" Category="02. Framework Generation - Optional" Description="SQL security output requires .NET Framework 4.5.2 or later; choose v4_5. Older SQL profiles are promoted to v4_5" %>
+ <%@ Property Name="IsConnectionStringAzure" Type="System.Boolean" Default="False" Category="02. Framework Generation - Optional" Description="Indicates if at runtime the netTiersConnectionString is read from Window Azure's ServiceConfiguration.cscfg or from Web.config/app.config." %>
+ 
+ <%@ Assembly Name="SchemaExplorer" %>
+@@ -178,7 +178,11 @@
+ 	<% } else { %>
+     <ProjectType><%if (IncludeWebservice) Response.Write("Web"); else Response.Write("Local"); %></ProjectType>
+ 	<% } %>
++<% if (ProviderInvariantName == "System.Data.SqlClient" && (IncludeDALBase || IncludeSqlClient || IncludeBll || IncludeComponents)) { %>
++    <TargetFrameworkVersion>v<%= (new System.Version(GetDotNetFrameworkString(DotNetVersion)) < new System.Version("4.5.2") ? "4.5.2" : GetDotNetFrameworkString(DotNetVersion)) %></TargetFrameworkVersion>
++<% } else { %>
+ 	<% if (VisualStudioVersion == MoM.Templates.VSNetVersion.v2008 || VisualStudioVersion == MoM.Templates.VSNetVersion.v2010 || VisualStudioVersion == MoM.Templates.VSNetVersion.v2012 || VisualStudioVersion == MoM.Templates.VSNetVersion.v2013) { %><TargetFrameworkVersion>v<%= GetDotNetFrameworkString( DotNetVersion ) %></TargetFrameworkVersion><%}%>
++<% } %>
+     <OutputType>Library</OutputType>
+     <ApplicationIcon>
+ 	</ApplicationIcon>
+@@ -283,6 +287,9 @@
+ <%}%>
+     <Reference Include="System.Web"/>
+     <Reference Include="System.Data"/>
++<% if (ProviderInvariantName == "System.Data.SqlClient" && IncludeDALBase) { %>
++    <Reference Include="System.Security"/>
++<% } %>
+     <Reference Include="System.Design"/>
+     <Reference Include="System.Xml"/>
+     <Reference Include="System.Configuration" />
+@@ -1082,6 +1089,13 @@
+ 			<Compile Include="<%=DALSubFolder%>Query\StringTokenizer.cs">
+ 			  <SubType>Code</SubType>
+ 			</Compile>
++<% if (ProviderInvariantName == "System.Data.SqlClient") { %>
++            <Compile Include="<%=DALSubFolder%>Security\AuditRedaction.cs" />
++            <Compile Include="<%=DALSubFolder%>Security\LegacyConnectionDecoder.cs" />
++            <Compile Include="<%=DALSubFolder%>Security\SecureSqlDatabase.cs" />
++            <Compile Include="<%=DALSubFolder%>Security\SessionReader.cs" />
++            <Compile Include="<%=DALSubFolder%>Security\SqlSession.cs" />
++<% } %>
+ 			<Compile Include="<%=DALSubFolder%>Utility.cs">
+ 			  <SubType>Code</SubType>
+ 			</Compile>

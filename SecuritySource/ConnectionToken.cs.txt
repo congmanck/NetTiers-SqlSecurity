@@ -1,0 +1,155 @@
+using System;
+using System.IO;
+using System.Security.Cryptography;
+using System.Text;
+
+namespace __DAL_NAMESPACE__.Security
+{
+    public enum ConnectionTokenStatus { Invalid, Valid, Expired }
+
+    public sealed class InvalidConnectionTokenException : CryptographicException
+    {
+        public InvalidConnectionTokenException() : base("Chuỗi mã hoá không hợp lệ.") { }
+    }
+
+    // Shared by the receiving application and the standalone issuer (.NET 4.5.2).
+    public static class ConnectionToken
+    {
+        public const string KeyFileName = "HocPhi.dpk";
+        private const string Prefix = "HPC1.";
+
+        public static byte[] ReadKey(string path)
+        {
+            byte[] key = File.ReadAllBytes(path);
+            if (key.Length != 64) { Array.Clear(key, 0, key.Length); throw new CryptographicException(); }
+            return key;
+        }
+
+        public static string Create(string cipher, int minutes, byte[] key)
+        {
+            return CreateAt(cipher, minutes, key, DateTime.UtcNow);
+        }
+
+        public static string CreateAt(string cipher, int minutes, byte[] key, DateTime utcNow)
+        {
+            if (string.IsNullOrWhiteSpace(cipher) || cipher.Length > 32768 || minutes < 1 || minutes > 1440 || utcNow.Kind != DateTimeKind.Utc)
+                throw new ArgumentException();
+            ValidateKey(key);
+            byte[] payload;
+            using (var stream = new MemoryStream())
+            {
+                using (var writer = new BinaryWriter(stream, Encoding.UTF8, true))
+                {
+                    writer.Write(utcNow.Ticks);
+                    writer.Write(utcNow.AddMinutes(minutes).Ticks);
+                    writer.Write(cipher);
+                }
+                payload = stream.ToArray();
+            }
+            try
+            {
+                using (var aes = Aes.Create())
+                {
+                    aes.Key = Slice(key, 0, 32);
+                    aes.GenerateIV();
+                    using (var encryptor = aes.CreateEncryptor())
+                    {
+                        byte[] encrypted = encryptor.TransformFinalBlock(payload, 0, payload.Length);
+                        byte[] envelope = new byte[1 + 16 + encrypted.Length + 32];
+                        envelope[0] = 1;
+                        Buffer.BlockCopy(aes.IV, 0, envelope, 1, 16);
+                        Buffer.BlockCopy(encrypted, 0, envelope, 17, encrypted.Length);
+                        using (var mac = new HMACSHA256(Slice(key, 32, 32)))
+                        {
+                            byte[] tag = mac.ComputeHash(envelope, 0, envelope.Length - 32);
+                            Buffer.BlockCopy(tag, 0, envelope, envelope.Length - 32, 32);
+                        }
+                        return Prefix + Convert.ToBase64String(envelope);
+                    }
+                }
+            }
+            finally { Array.Clear(payload, 0, payload.Length); }
+        }
+
+        public static string Open(string token, byte[] key, DateTime utcNow)
+        {
+            string cipher;
+            if (TryOpen(token, key, utcNow, out cipher) != ConnectionTokenStatus.Valid)
+                throw new InvalidConnectionTokenException();
+            return cipher;
+        }
+
+        public static ConnectionTokenStatus TryOpen(string token, byte[] key, DateTime utcNow, out string cipher)
+        {
+            cipher = null;
+            try
+            {
+                bool expired;
+                string decoded = OpenAuthenticated(token, key, utcNow, out expired);
+                if (expired) return ConnectionTokenStatus.Expired;
+                cipher = decoded;
+                return ConnectionTokenStatus.Valid;
+            }
+            catch (CryptographicException) { return ConnectionTokenStatus.Invalid; }
+            catch (FormatException) { return ConnectionTokenStatus.Invalid; }
+            catch (IOException) { return ConnectionTokenStatus.Invalid; }
+            catch (ArgumentException) { return ConnectionTokenStatus.Invalid; }
+        }
+
+        private static string OpenAuthenticated(string token, byte[] key, DateTime utcNow, out bool expired)
+        {
+            expired = false;
+            ValidateKey(key);
+            if (utcNow.Kind != DateTimeKind.Utc || token == null || token.Length > 200000 || !token.StartsWith(Prefix, StringComparison.Ordinal))
+                throw new CryptographicException();
+            byte[] envelope = Convert.FromBase64String(token.Substring(Prefix.Length));
+            if (envelope.Length < 65 || envelope[0] != 1 || (envelope.Length - 49) % 16 != 0)
+                throw new CryptographicException();
+            using (var mac = new HMACSHA256(Slice(key, 32, 32)))
+            {
+                byte[] tag = mac.ComputeHash(envelope, 0, envelope.Length - 32);
+                int difference = 0;
+                for (int i = 0; i < 32; i++) difference |= tag[i] ^ envelope[envelope.Length - 32 + i];
+                if (difference != 0) throw new CryptographicException();
+            }
+            using (var aes = Aes.Create())
+            {
+                aes.Key = Slice(key, 0, 32);
+                aes.IV = Slice(envelope, 1, 16);
+                using (var decryptor = aes.CreateDecryptor())
+                {
+                    byte[] payload = decryptor.TransformFinalBlock(envelope, 17, envelope.Length - 49);
+                    try
+                    {
+                        using (var stream = new MemoryStream(payload))
+                        using (var reader = new BinaryReader(stream, Encoding.UTF8))
+                        {
+                            long issued = reader.ReadInt64();
+                            long expires = reader.ReadInt64();
+                            if (issued < DateTime.MinValue.Ticks || expires > DateTime.MaxValue.Ticks || expires <= issued || expires - issued > TimeSpan.FromDays(1).Ticks || utcNow.Ticks < issued)
+                                throw new CryptographicException();
+                            string cipher = reader.ReadString();
+                            if (string.IsNullOrWhiteSpace(cipher) || cipher.Length > 32768 || stream.Position != stream.Length)
+                                throw new CryptographicException();
+                            expired = utcNow.Ticks >= expires;
+                            return cipher;
+                        }
+                    }
+                    finally { Array.Clear(payload, 0, payload.Length); }
+                }
+            }
+        }
+
+        private static void ValidateKey(byte[] key)
+        {
+            if (key == null || key.Length != 64) throw new CryptographicException();
+        }
+
+        private static byte[] Slice(byte[] source, int offset, int count)
+        {
+            byte[] result = new byte[count];
+            Buffer.BlockCopy(source, offset, result, 0, count);
+            return result;
+        }
+    }
+}

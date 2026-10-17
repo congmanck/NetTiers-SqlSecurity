@@ -1,0 +1,34 @@
+using System;
+using System.Data;
+using System.Threading;
+
+namespace __DAL_NAMESPACE__.Security
+{
+    internal sealed class SessionReader : IDataReader
+    {
+        private readonly IDataReader inner; private SqlLease lease;
+        private IDisposable watch;
+        internal SessionReader(IDataReader reader, SqlLease owner,IDisposable commandScope=null) { inner = reader; lease = owner;watch=commandScope; }
+        public void Close() { try { inner.Close(); } finally { Release();GC.SuppressFinalize(this); } }
+        public void Dispose() { try { inner.Dispose(); } finally { Release();GC.SuppressFinalize(this); } }
+        private void Release() { var scope=Interlocked.Exchange(ref watch,null);if(scope!=null)scope.Dispose();var owner = Interlocked.Exchange(ref lease,null); if (owner != null) owner.Dispose(); }
+        ~SessionReader(){try{inner.Close();}catch{}finally{try{Release();}catch{}}}
+        public int Depth { get { return inner.Depth; } } public bool IsClosed { get { return inner.IsClosed; } }
+        public int RecordsAffected { get { return inner.RecordsAffected; } } public int FieldCount { get { return inner.FieldCount; } }
+        public object this[int index] { get { return inner[index]; } } public object this[string name] { get { return inner[name]; } }
+        public bool Read() { try{return inner.Read();}catch{Close();throw;} }
+        public bool NextResult() { try{bool result=inner.NextResult();if(!result)Close();return result;}catch{Close();throw;} }
+        public DataTable GetSchemaTable() { return inner.GetSchemaTable(); }
+        public bool GetBoolean(int i) { return inner.GetBoolean(i); } public byte GetByte(int i) { return inner.GetByte(i); }
+        public long GetBytes(int i,long offset,byte[] buffer,int start,int count) { return inner.GetBytes(i,offset,buffer,start,count); }
+        public char GetChar(int i) { return inner.GetChar(i); } public long GetChars(int i,long offset,char[] buffer,int start,int count) { return inner.GetChars(i,offset,buffer,start,count); }
+        public IDataReader GetData(int i) { return inner.GetData(i); } public string GetDataTypeName(int i) { return inner.GetDataTypeName(i); }
+        public DateTime GetDateTime(int i) { return inner.GetDateTime(i); } public decimal GetDecimal(int i) { return inner.GetDecimal(i); }
+        public double GetDouble(int i) { return inner.GetDouble(i); } public Type GetFieldType(int i) { return inner.GetFieldType(i); }
+        public float GetFloat(int i) { return inner.GetFloat(i); } public Guid GetGuid(int i) { return inner.GetGuid(i); }
+        public short GetInt16(int i) { return inner.GetInt16(i); } public int GetInt32(int i) { return inner.GetInt32(i); } public long GetInt64(int i) { return inner.GetInt64(i); }
+        public string GetName(int i) { return inner.GetName(i); } public int GetOrdinal(string name) { return inner.GetOrdinal(name); }
+        public string GetString(int i) { return inner.GetString(i); } public object GetValue(int i) { return inner.GetValue(i); }
+        public int GetValues(object[] values) { return inner.GetValues(values); } public bool IsDBNull(int i) { return inner.IsDBNull(i); }
+    }
+}

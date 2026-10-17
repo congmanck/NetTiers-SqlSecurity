@@ -1,0 +1,141 @@
+using System;
+using System.Collections.Generic;
+using System.Data.SqlClient;
+using System.Data.Common;
+using System.Security;
+using System.Threading;
+
+namespace __DAL_NAMESPACE__.Security
+{
+    /// <summary>Owns one credential and pool identity; callers own operation leases.</summary>
+    public sealed class SqlSession : IDisposable
+    {
+        private readonly object gate = new object();
+        private SecureString password;
+        private readonly SqlCredential credential;
+        private int operations;
+        private bool retiring, disposed;
+        public string ConnectionString { get; private set; }
+        public string UserName { get; private set; }
+        public SqlSession(string options, string userName, SecureString secret)
+        {
+            var builder = new SqlConnectionStringBuilder(options);
+            builder.Remove("User ID"); builder.Remove("Password"); builder.PersistSecurityInfo = false;
+            if (string.IsNullOrWhiteSpace(builder.DataSource)) throw new ArgumentException("SQL server required.");
+            ConnectionString = builder.ConnectionString; UserName = userName ?? "";
+            password = secret.Copy(); password.MakeReadOnly();
+            if (!builder.IntegratedSecurity)
+            {
+                if (UserName.Length == 0 || password.Length == 0) { password.Dispose(); throw new ArgumentException("SQL credential required."); }
+                try { credential = new SqlCredential(UserName, password); }
+                catch { password.Dispose(); throw; }
+            }
+        }
+        public SqlLease Acquire()
+        {
+            var check=SqlSessions.BeforeOperation;if(check!=null)check();
+            lock (gate)
+            {
+                if (retiring || disposed || SqlSessions.Stopping) throw new InvalidOperationException("SQL session is stopping.");
+                operations++; return new SqlLease(this);
+            }
+        }
+        internal SqlConnection Connection()
+        {
+            lock (gate)
+            {
+                if (disposed) throw new ObjectDisposedException("SqlSession");
+                return credential == null ? new SqlConnection(ConnectionString) : new SqlConnection(ConnectionString, credential);
+            }
+        }
+        internal void Release()
+        { lock (gate) { if (--operations < 0) throw new InvalidOperationException("Lease imbalance."); if (retiring && operations == 0) Clear(); Monitor.PulseAll(gate); } }
+        public void Dispose()
+        { lock (gate) { retiring = true; if (operations == 0) Clear(); } }
+        private void Clear()
+        {
+            if (disposed) return;
+            // Same credential object selects the original pool; never clear unrelated pools.
+            try { using (var connection = Connection()) SqlConnection.ClearPool(connection); }
+            finally { password.Dispose(); disposed = true; }
+        }
+        internal bool IsDisposed { get { lock (gate) return disposed; } }
+        public SecureString CopyPassword() { using(Acquire())return password.Copy(); }
+        /// <summary>Compatibility boundary only: produces an immutable plaintext password.</summary>
+        public string ExportLegacy()
+        {
+            using (Acquire())
+            {
+                var builder = new SqlConnectionStringBuilder(ConnectionString);
+                if (credential == null) return builder.ConnectionString;
+                IntPtr pointer = System.Runtime.InteropServices.Marshal.SecureStringToGlobalAllocUnicode(password);
+                try { builder.UserID = UserName; builder.Password = System.Runtime.InteropServices.Marshal.PtrToStringUni(pointer); return builder.ConnectionString; }
+                finally { System.Runtime.InteropServices.Marshal.ZeroFreeGlobalAllocUnicode(pointer); }
+            }
+        }
+        /// <summary>Storage compatibility buffer; the caller must clear the returned bytes.</summary>
+        public byte[] ExportStorageBytes()
+        {
+            using(Acquire())
+            {
+                if(credential==null)return System.Text.Encoding.UTF8.GetBytes(ConnectionString);
+                string prefix=ConnectionString.TrimEnd(';')+";User ID=\""+UserName.Replace("\"","\"\"")+"\";Password=\"";
+                char[] characters=new char[prefix.Length+password.Length*2+2];prefix.CopyTo(0,characters,0,prefix.Length);int count=prefix.Length;
+                IntPtr pointer=System.Runtime.InteropServices.Marshal.SecureStringToGlobalAllocUnicode(password);
+                try
+                {
+                    for(int i=0;i<password.Length;i++){char c=(char)System.Runtime.InteropServices.Marshal.ReadInt16(pointer,i*2);characters[count++]=c;if(c=='"')characters[count++]='"';}
+                    characters[count++]='"';characters[count++]=';';return System.Text.Encoding.UTF8.GetBytes(characters,0,count);
+                }
+                finally{Array.Clear(characters,0,characters.Length);System.Runtime.InteropServices.Marshal.ZeroFreeGlobalAllocUnicode(pointer);}
+            }
+        }
+    }
+    public sealed class SqlLease : IDisposable
+    {
+        private SqlSession session;
+        internal SqlLease(SqlSession value) { session = value; }
+        public SqlConnection CreateConnection() { if (session == null) throw new ObjectDisposedException("SqlLease"); return session.Connection(); }
+        public void Dispose() { var value = Interlocked.Exchange(ref session, null); if (value != null) value.Release(); }
+    }
+    /// <summary>Provider constructors carry opaque references, never credential-bearing strings.</summary>
+    public static class SqlSessions
+    {
+        private const string Prefix = "sql-session:";
+        private static readonly object Gate = new object();
+        private static readonly Dictionary<string, SqlSession> Sessions = new Dictionary<string, SqlSession>();
+        private static readonly Dictionary<DbCommand,int> Commands = new Dictionary<DbCommand,int>();
+        public static bool Stopping { get; private set; }
+        public static Action BeforeOperation { get; set; }
+        public static string Register(SqlSession session)
+        { lock (Gate) { if (Stopping) { session.Dispose(); throw new InvalidOperationException("SQL is stopping."); } string key = Prefix + Guid.NewGuid().ToString("N"); Sessions.Add(key, session); return key; } }
+        public static bool IsReference(string value) { return value != null && value.StartsWith(Prefix, StringComparison.Ordinal); }
+        public static string ProtectReference(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return value;
+            if (IsReference(value)) { Resolve(value); return value; }
+            char[] characters = value.ToCharArray();
+            try { return Register(LegacyConnectionDecoder.Parse(characters)); } finally { Array.Clear(characters, 0, characters.Length); }
+        }
+        public static SqlSession Resolve(string reference)
+        { lock (Gate) { SqlSession value; if (!Sessions.TryGetValue(reference, out value)) throw new InvalidOperationException("Unknown SQL session."); return value; } }
+        public static SqlLease Acquire(string reference) { return Resolve(reference).Acquire(); }
+        public static string ExportLegacy(string value) { return IsReference(value) ? Resolve(value).ExportLegacy() : value; }
+        public static void Retire(string reference)
+        { if (IsReference(reference)) { lock (Gate) { SqlSession value; if (Sessions.TryGetValue(reference, out value)) { value.Dispose(); if (value.IsDisposed) Sessions.Remove(reference); } } } }
+        public static void Stop()
+        {
+            DbCommand[] commands;
+            lock (Gate) { Stopping = true; commands=new DbCommand[Commands.Count];Commands.Keys.CopyTo(commands,0);foreach (var session in Sessions.Values) session.Dispose(); }
+            foreach(var command in commands)ThreadPool.QueueUserWorkItem(_=>{try{command.Cancel();}catch{}});
+        }
+        public static IDisposable Watch(DbCommand command)
+        {lock(Gate){if(Stopping)throw new OperationCanceledException("SQL is stopping.");int count;Commands.TryGetValue(command,out count);Commands[command]=count+1;return new CommandScope(command);}}
+        private sealed class CommandScope : IDisposable
+        {
+            private DbCommand command;internal CommandScope(DbCommand value){command=value;}
+            public void Dispose(){lock(Gate){if(command!=null){int count=Commands[command];if(count==1)Commands.Remove(command);else Commands[command]=count-1;command=null;}}}
+        }
+        public static bool Drained { get { lock (Gate) { foreach (var session in Sessions.Values) if (!session.IsDisposed) return false; return true; } } }
+    }
+}

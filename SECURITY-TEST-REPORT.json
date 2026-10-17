@@ -1,0 +1,19 @@
+{
+  "modifiedTemplates": 8,
+  "securityAssets": 5,
+  "sqlProviderStaticAudit": "PASS",
+  "otherOriginalFilesUnchanged": "PASS",
+  "nonSqlTransactionBranchUnchanged": "PASS",
+  "namespaceLiteralMaterialization": [
+    "Accounts.Data",
+    "PortingTrial.Data"
+  ],
+  "twoMaterializationsIdentical": true,
+  "CodeSmithSchemaGeneration": "NOT RUN - engine not found; table/view/custom procedure generation pending",
+  "fullGeneratedSolutionBuild": "NOT RUN",
+  "literalSourceCompilation": "PASS: Accounts.Data and PortingTrial.Data",
+  "compatibilityFixtureAssertionsPerNamespace": 20,
+  "CodeSmithProjectRendering": "NOT RUN",
+  "frameworkDefaults": "v4_5; EntLib v3_1; old SQL v4 profile promoted, project minimum v4.5.2",
+  "frameworkStaticRecheck": "PASS"
+}

@@ -1,0 +1,18 @@
+[0723/181902.235:ERROR:process_reader_win.cc(155)] SuspendThread: Access is denied. (0x5)
+[0723/181902.238:ERROR:process_reader_win.cc(155)] SuspendThread: Access is denied. (0x5)
+[0723/181902.238:ERROR:process_reader_win.cc(155)] SuspendThread: Access is denied. (0x5)
+[0723/181902.238:ERROR:process_reader_win.cc(155)] SuspendThread: Access is denied. (0x5)
+[0723/181902.238:ERROR:process_reader_win.cc(155)] SuspendThread: Access is denied. (0x5)
+[0723/181902.239:ERROR:process_reader_win.cc(155)] SuspendThread: Access is denied. (0x5)
+[0723/181902.239:ERROR:process_reader_win.cc(155)] SuspendThread: Access is denied. (0x5)
+[0723/181902.239:ERROR:process_reader_win.cc(155)] SuspendThread: Access is denied. (0x5)
+[0723/181902.239:ERROR:process_reader_win.cc(155)] SuspendThread: Access is denied. (0x5)
+[0723/181902.239:ERROR:process_reader_win.cc(127)] NtOpenThread: {Access Denied} A process has requested access to an object, but has not been granted those access rights. (0xc0000022)
+[0723/181902.240:ERROR:exception_snapshot_win.cc(99)] thread ID 1780 not found in process
+[0723/181902.694:ERROR:minidumpwritedump_with_crashpad_info.cc(435)] Failed to call MiniDumpWriteDump: Access is denied. (0x80070005)
+[0723/181902.694:ERROR:minidumpwritedump_with_crashpad_info.cc(592)] Failed to write minidump file
+[0723/181902.694:ERROR:crash_report_exception_handler.cc(132)] TryMiniDumpWriteDumpWithCrashpadInfo failed
+[0723/181902.694:ERROR:process_memory_win.cc(73)] ReadMemory at 0x1dfbd293650 of 72 bytes failed: Only part of a ReadProcessMemory or WriteProcessMemory request was completed. (0x12B)
+[0723/181902.702:WARNING:pe_image_annotations_reader.cc(134)] could not read annotations list object in C:\Program Files (x86)\Microsoft\Edge\Application\84.0.522.40\msedge_elf.dll
+[0723/181902.702:ERROR:process_memory_win.cc(73)] ReadMemory at 0x1dfbd2dc910 of 72 bytes failed: Only part of a ReadProcessMemory or WriteProcessMemory request was completed. (0x12B)
+[0723/181902.702:WARNING:pe_image_annotations_reader.cc(134)] could not read annotations list object in C:\Program Files (x86)\Microsoft\Edge\Application\84.0.522.40\msedge.dll
