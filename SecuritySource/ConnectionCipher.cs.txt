@@ -1,0 +1,111 @@
+using System;
+using System.IO;
+using System.Security.Cryptography;
+using System.Text;
+
+namespace __DAL_NAMESPACE__.Security
+{
+    // Stateless codec: no access to SQL sessions or their credentials.
+    public static class ConnectionCipher
+    {
+        public const string Prefix = "HPCF2.";
+        public const int MaximumCipherLength = 32768;
+        public static bool IsNew(string value) { return value != null && value.StartsWith(Prefix, StringComparison.Ordinal); }
+        public static byte[] ReadDefaultKey()
+        {
+            byte[] key = File.ReadAllBytes(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "HocPhi.dpk"));
+            if (key.Length != 64) { Array.Clear(key, 0, key.Length); throw new CryptographicException("Invalid cipher key."); }
+            return key;
+        }
+        private static byte[] Derive(byte[] key, string purpose)
+        {
+            if (key == null || key.Length != 64) throw new CryptographicException("Invalid cipher key.");
+            using (var hmac = new HMACSHA256(key)) return hmac.ComputeHash(Encoding.ASCII.GetBytes("HocPhi/ConnectionCipher/HPCF2/" + purpose));
+        }
+        public static string Encrypt(byte[] plaintext, byte[] key)
+        {
+            if (plaintext == null || plaintext.Length == 0 || plaintext.Length > 24000) throw new ArgumentException("Invalid cipher plaintext length.");
+            byte[] encryptionKey = null, authenticationKey = null;
+            try
+            {
+                encryptionKey = Derive(key, "encryption"); authenticationKey = Derive(key, "authentication");
+                using (var aes = Aes.Create())
+                {
+                    aes.Key = encryptionKey; aes.Mode = CipherMode.CBC; aes.Padding = PaddingMode.PKCS7; aes.GenerateIV();
+                    using (var transform = aes.CreateEncryptor())
+                    {
+                        byte[] ciphertext = transform.TransformFinalBlock(plaintext, 0, plaintext.Length);
+                        byte[] envelope = new byte[49 + ciphertext.Length]; envelope[0] = 2;
+                        Buffer.BlockCopy(aes.IV, 0, envelope, 1, 16); Buffer.BlockCopy(ciphertext, 0, envelope, 17, ciphertext.Length);
+                        using (var mac = new HMACSHA256(authenticationKey))
+                        {
+                            byte[] tag = mac.ComputeHash(envelope, 0, envelope.Length - 32);
+                            Buffer.BlockCopy(tag, 0, envelope, envelope.Length - 32, 32);
+                        }
+                        return Prefix + Convert.ToBase64String(envelope);
+                    }
+                }
+            }
+            finally { Clear(encryptionKey); Clear(authenticationKey); }
+        }
+        // Caller owns and must clear the returned plaintext buffer.
+        public static byte[] Decrypt(string cipher, byte[] key)
+        {
+            if (!IsNew(cipher) || cipher.Length > MaximumCipherLength) throw new CryptographicException("Invalid cipher.");
+            byte[] encryptionKey = null, authenticationKey = null;
+            try
+            {
+                byte[] envelope = Convert.FromBase64String(cipher.Substring(Prefix.Length));
+                if (envelope.Length < 65 || envelope[0] != 2 || (envelope.Length - 49) % 16 != 0) throw new CryptographicException("Invalid cipher.");
+                authenticationKey = Derive(key, "authentication");
+                using (var mac = new HMACSHA256(authenticationKey))
+                {
+                    byte[] tag = mac.ComputeHash(envelope, 0, envelope.Length - 32);
+                    int difference = 0; for (int i = 0; i < 32; i++) difference |= tag[i] ^ envelope[envelope.Length - 32 + i];
+                    if (difference != 0) throw new CryptographicException("Invalid cipher.");
+                }
+                encryptionKey = Derive(key, "encryption");
+                using (var aes = Aes.Create())
+                {
+                    aes.Key = encryptionKey; aes.Mode = CipherMode.CBC; aes.Padding = PaddingMode.None;
+                    byte[] iv = new byte[16]; Buffer.BlockCopy(envelope, 1, iv, 0, 16); aes.IV = iv;
+                    using (var transform = aes.CreateDecryptor())
+                    {
+                        byte[] padded = transform.TransformFinalBlock(envelope, 17, envelope.Length - 49);
+                        try
+                        {
+                            int padding = padded[padded.Length - 1];
+                            if (padding < 1 || padding > 16 || padding > padded.Length) throw new CryptographicException("Invalid cipher.");
+                            int invalid = 0; for (int i = 0; i < padding; i++) invalid |= padded[padded.Length - 1 - i] ^ padding;
+                            int length = padded.Length - padding;
+                            if (invalid != 0 || length < 1 || length > 24000) throw new CryptographicException("Invalid cipher.");
+                            byte[] plain = new byte[length]; Buffer.BlockCopy(padded, 0, plain, 0, length); return plain;
+                        }
+                        finally { Clear(padded); }
+                    }
+                }
+            }
+            catch (FormatException) { throw new CryptographicException("Invalid cipher."); }
+            finally { Clear(encryptionKey); Clear(authenticationKey); }
+        }
+        public static byte[] DecryptWithDefaultKey(string cipher)
+        {
+            byte[] key = ReadDefaultKey();
+            try { return Decrypt(cipher, key); } finally { Clear(key); }
+        }
+        public static string EncryptLegacy(byte[] plaintext)
+        {
+            if (plaintext == null || plaintext.Length == 0 || plaintext.Length > 24000) throw new ArgumentException();
+            byte[] key = null;
+            try
+            {
+                using (var derive = new PasswordDeriveBytes("aquafina@1163", null)) key = derive.GetBytes(32);
+                using (var aes = new RijndaelManaged { Mode = CipherMode.CBC, Padding = PaddingMode.PKCS7 })
+                using (var transform = aes.CreateEncryptor(key, Encoding.ASCII.GetBytes("tu89geji340t89u2")))
+                    return Convert.ToBase64String(transform.TransformFinalBlock(plaintext, 0, plaintext.Length)).Replace('+', '_').Replace('/', '-').Replace('=', '$');
+            }
+            finally { Clear(key); }
+        }
+        private static void Clear(byte[] bytes) { if (bytes != null) Array.Clear(bytes, 0, bytes.Length); }
+    }
+}

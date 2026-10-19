@@ -37,6 +37,11 @@ internal static class ApiSurfaceProbe
     {
         try
         {
+            byte[] vectorKey = new byte[64]; for (int i = 0; i < 64; i++) vectorKey[i] = (byte)i;
+            byte[] vectorPlain = ConnectionCipher.Decrypt("HPCF2.AgABAgMEBQYHCAkKCwwNDg/y7kAihyx7dbzOOSck1Do8C8xkYLyGMXq2gtTWHovJt/Q12hUlbJMsPuN+YrF5JHRRfOLUV+mSg+jSHG1lcBrS9RBPSHvsrp+HvQUhHlHS4NfbLDS9rCPBlu478D2ebE2TBxf4HnFx0IcFDdDJcYot", vectorKey);
+            Check(Encoding.UTF8.GetString(vectorPlain) == "Server=localhost;Database=CipherVector;Integrated Security=True;");
+            Array.Clear(vectorPlain, 0, vectorPlain.Length);
+
             var assembly = typeof(SqlSessions).Assembly;
             foreach (string type in new[] { "LegacyConnectionDecoder", "DpapiConnectionFile", "DpapiContent", "DpapiContentKind" })
             {
@@ -69,6 +74,21 @@ internal static class ApiSurfaceProbe
             Check(File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "HocPhi.dpa")));
             string recovered = SqlConfiguration.RuntimeConnectionKey;
             Check(Credential(recovered) == Credential(next));
+            string keyPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "HocPhi.dpk");
+            File.WriteAllBytes(keyPath, vectorKey);
+            byte[] modernPlain = Encoding.UTF8.GetBytes("Server=localhost;Database=ModernApi;User ID=synthetic;Password=\"test; unicode-đ\";");
+            try
+            {
+                foreach (string cipher in new[] { ConnectionCipher.EncryptLegacy(modernPlain), ConnectionCipher.Encrypt(modernPlain, vectorKey) })
+                {
+                    string imported = SqlConfiguration.CreateSessionFromToken(ConnectionToken.Create(cipher, 5, vectorKey));
+                    Check(Credential(imported) == "test; unicode-đ");
+                    SqlConfiguration.SaveSession(imported);
+                    Check(Credential(SqlConfiguration.RuntimeConnectionKey) == "test; unicode-đ");
+                    SqlSessions.Retire(imported);
+                }
+            }
+            finally { File.Delete(keyPath); Array.Clear(modernPlain, 0, modernPlain.Length); Array.Clear(vectorKey, 0, vectorKey.Length); }
             string retiring = Create(null, "localhost", "LeaseTest", "test-user", "synthetic-only");
             var active = SqlSessions.Acquire(retiring);
             SqlSessions.Retire(retiring);

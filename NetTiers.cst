@@ -1999,7 +1999,7 @@
             {
                 string securityDirectory = Path.Combine(rootPathDAL, "Security");
                 Directory.CreateDirectory(securityDirectory);
-                string[] securityFiles = new string[] { "AuditRedaction.cs","ConnectionToken.cs","DpapiConnectionFile.cs","LegacyConnectionDecoder.cs","SecureSqlDatabase.cs","SessionReader.cs","SqlSession.cs","SqlConfiguration.cs" };
+                string[] securityFiles = new string[] { "ConnectionCipher.cs","AuditRedaction.cs","ConnectionToken.cs","DpapiConnectionFile.cs","LegacyConnectionDecoder.cs","SecureSqlDatabase.cs","SessionReader.cs","SqlSession.cs","SqlConfiguration.cs" };
                 foreach (string securityFile in securityFiles)
                 {
                     string sourceFile = Path.Combine(this.CodeTemplateInfo.DirectoryName, "SecuritySource\\" + securityFile + ".txt");

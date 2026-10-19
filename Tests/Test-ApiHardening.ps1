@@ -8,7 +8,15 @@ if (!$compiler) { throw 'Install .NET SDK for Roslyn.' }
 $framework = Join-Path $env:WINDIR 'Microsoft.NET\Framework\v4.0.30319'
 $references = @('mscorlib','System','System.Core','System.Data','System.Security','System.Configuration','System.Xml') | ForEach-Object { '/reference:' + (Join-Path $framework ($_ + '.dll')) }
 $master = [IO.File]::ReadAllText((Join-Path $base 'NetTiers.cst'))
+if ($master -notmatch '"ConnectionCipher.cs"') { throw 'Cipher generator registration missing.' }
 if ($master -notmatch '"SqlConfiguration.cs"' -or !$master.Contains('AddFileNode(commonNode, "Security\\" + securityFile)')) { throw 'Generator project registration missing.' }
+$projectTemplate = [IO.File]::ReadAllText((Join-Path $base 'VisualStudio\vsnet2005.project.cst'))
+if (!$projectTemplate.Contains('Security\ConnectionCipher.cs')) { throw 'Cipher Compile Include missing.' }
+foreach ($name in @('ConnectionCipher','LegacyConnectionDecoder','SqlConfiguration','DpapiConnectionFile')) {
+    $canonical = [IO.File]::ReadAllText((Join-Path $base ('..\HocPhiChung2026\Accounts.Data\Security\' + $name + '.cs'))).Replace('Accounts.Data','__DAL_NAMESPACE__').Replace("`r`n","`n")
+    $asset = [IO.File]::ReadAllText((Join-Path $base ('SecuritySource\' + $name + '.cs.txt'))).Replace("`r`n","`n")
+    if ($canonical -cne $asset) { throw "Security source drift: $name" }
+}
 foreach ($template in Get-ChildItem $base -Recurse -Filter '*.cst') {
     $text = [IO.File]::ReadAllText($template.FullName)
     if ($text.Contains('SqlSessions.ExportLegacy(')) { throw "Legacy getter remains: $($template.FullName)" }
@@ -16,7 +24,7 @@ foreach ($template in Get-ChildItem $base -Recurse -Filter '*.cst') {
 foreach ($namespace in @('Accounts.Data','PortingTrial.Data')) {
     $folder = Join-Path $output $namespace
     New-Item -ItemType Directory -Path $folder | Out-Null
-    $sources = foreach ($name in @('SqlSession','SqlConfiguration','ConnectionToken','DpapiConnectionFile','LegacyConnectionDecoder')) {
+    $sources = foreach ($name in @('ConnectionCipher','SqlSession','SqlConfiguration','ConnectionToken','DpapiConnectionFile','LegacyConnectionDecoder')) {
         $asset = [IO.File]::ReadAllText((Join-Path $base ('SecuritySource\' + $name + '.cs.txt')))
         if (!$asset.Contains('__DAL_NAMESPACE__')) { throw "Namespace marker missing: $name" }
         $path = Join-Path $folder ($name + '.cs')

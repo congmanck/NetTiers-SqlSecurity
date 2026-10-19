@@ -13,7 +13,7 @@ Bộ SQL bảo mật hiện chỉ hỗ trợ EnterpriseLibrary 3.1 đã kiểm t
 - Table provider base, view provider base và SqlNetTiersProvider sinh SecureSqlDatabase; constructor/config/setter chuyển input thành tham chiếu phiên. Getter chuỗi công khai dùng GetSafeConnectionString, không trả Password/User ID; đường execute nội bộ dùng tham chiếu phiên. ExportLegacy/CopyPassword đã bỏ; ExportStorageBytes và các lớp giải mã/DPAPI là internal.
 - TransactionManager giữ lease đến sau connection/transaction, rollback khi stop trước commit và dispose đúng thứ tự. Nhánh ngoài SQL giữ template cũ.
 - DataRepository thay provider trùng tên và bảo vệ tham chiếu trong ConnectionProvider. Utility giữ nguyên câu SQL/tên DB log hiện có, thêm lease/disposal/redaction và không ghi nguyên SQL text tự do. Không sửa template stored procedure/schema.
-- Luồng generate tự ghi lại 8 file trong Security, thêm node project và Compile Include/System.Security. Namespace lấy từ DALNameSpace; không hardcode Accounts.Data. Source assets nằm trong SecuritySource/*.cs.txt, dùng marker __DAL_NAMESPACE__.
+- Luồng generate tự ghi lại 9 file trong Security, thêm node project và Compile Include/System.Security. Namespace lấy từ DALNameSpace; không hardcode Accounts.Data. Source assets nằm trong SecuritySource/*.cs.txt, dùng marker __DAL_NAMESPACE__.
 - AppConnection, form, Program và ReleaseProtection tiếp tục tích hợp bằng gói HocPhi-SqlSecurity-Porting riêng; generator này không tự sửa các file desktop đó.
 
 Không chuyển token sql-session sang SqlConnection/SqlConnectionStringBuilder trực tiếp. Các caller/helper bên ngoài provider vẫn phải được chuyển sang API lease như hướng dẫn porting. Nếu file cấu hình có raw SQL connection string, ConfigurationManager/caller cũ vẫn có thể giữ bản sao plaintext; template provider không thay thế việc bảo vệ cấu hình trong AppConnection.
@@ -21,7 +21,7 @@ Không chuyển token sql-session sang SqlConnection/SqlConnectionStringBuilder 
 ## Kiểm tra bằng CodeSmith trên máy có engine
 
 1. Compile template mới, chọn ít nhất một table, một view và custom stored procedure đang dùng; generate với ExecuteSql=False vào output thử.
-2. Kiểm tra 8 file Security, namespace, Compile Include, target framework và references; build output bằng compiler mới.
+2. Kiểm tra 9 file Security, namespace, Compile Include, target framework và references; build output bằng compiler mới.
 3. Generate lần hai cùng profile vào output thử. Chạy lại build và kiểm tra không mất Security hoặc thay adapter về SqlDatabase.
 4. Copy script Convert-NetTiers.py vào scripts/security của solution thử và chạy --check. Mẫu namespace khác vẫn cần kiểm tra trực tiếp constructor/config/getter/raw connection; --check không phải chứng minh an toàn toàn bộ.
 5. Chạy fixture và kiểm thử SQL/Windows auth, reader/dataset, transaction commit/rollback, provider reload, custom procedure, log nhạy cảm và tác vụ đồng thời trên DB thử. Không cấp credential thực qua command line.
@@ -46,3 +46,8 @@ Da sua nhanh IncludeComponents (Accounts.Services): project Services sinh ra cun
 
 ## API hardening 2026-10-17
 SqlConfiguration điều phối token, phiên và lưu/migrate DPAPI bên trong DAL. AppConnection và frmConfig cần bản port mới cùng DLL. Không dùng InternalsVisibleTo. Dữ liệu text/binary cũ giữ tương thích, EXE/plugin dùng API đã bỏ phải rebuild. Tests/Test-ApiHardening.ps1 kiểm tra hai namespace; chưa chạy CodeSmith với database thử nghiệm. Xem báo cáo API-HARDENING-20261017.md trong HocPhiChung2026.
+
+## Cipher HPCF2
+Cipher cũ và HPCF2 được nhận trong cấu hình, token HPC1 và nội dung cipher của DPAPI. Không thay vỏ token/DPAPI và không tự đổi chuẩn đã lưu. HPCF2 cần đúng HocPhi.dpk (64 byte) cạnh ứng dụng kể cả sau khi token hết hạn. Sao lưu khóa; không tạo lại/ghi đè khóa đang sử dụng. Chưa hỗ trợ xoay nhiều khóa. Mất khóa cần khôi phục khóa hoặc cấp lại cấu hình. Phát hành bộ đọc HocPhi và updater trước khi cấp cipher mới; không hạ về bản đọc cũ. Updater không nhận HPC1 trực tiếp. Không ghi khóa, mật khẩu hoặc cấu hình rõ vào log/Git.
+
+Kiểm thử HPCF2: `Tests/Test-ApiHardening.ps1` kiểm tra đăng ký ConnectionCipher trong generator/project, đồng bộ 4 asset với nguồn HocPhi, rồi materialize và compile với Accounts.Data và PortingTrial.Data. Cả hai đạt 60 check API/session gồm test vector cố định và nhập/lưu hai chuẩn qua token/DPAPI. Đây chưa phải chạy CodeSmith sinh toàn bộ từ schema.

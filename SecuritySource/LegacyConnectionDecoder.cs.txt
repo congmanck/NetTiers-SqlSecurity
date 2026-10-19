@@ -15,7 +15,7 @@ namespace __DAL_NAMESPACE__.Security
         public static SqlSession Decode(string stored, string applicationName = null)
         {
             byte[] plain = DecodeBytes(stored); char[] characters = null;
-            try { characters = Encoding.UTF8.GetChars(plain); return Parse(characters, applicationName); }
+            try { characters = new UTF8Encoding(false, true).GetChars(plain); return Parse(characters, applicationName); }
             finally { Array.Clear(plain, 0, plain.Length); if (characters != null) Array.Clear(characters, 0, characters.Length); }
         }
         public static byte[] DecodeBytes(string stored)
@@ -42,7 +42,7 @@ namespace __DAL_NAMESPACE__.Security
                     else if (content.Kind == DpapiContentKind.SqlConnection)
                         plain = (byte[])content.Data.Clone();
                     else throw new InvalidDataException("File không chứa cấu hình kết nối SQL.");
-                    characters = Encoding.UTF8.GetChars(plain);
+                    characters = new UTF8Encoding(false, true).GetChars(plain);
                     return Parse(characters, applicationName);
                 }
                 finally { if (plain != null) Array.Clear(plain, 0, plain.Length); if (characters != null) Array.Clear(characters, 0, characters.Length); }
@@ -58,6 +58,9 @@ namespace __DAL_NAMESPACE__.Security
             byte[] cipher = null, key = null;
             try
             {
+                string encoded = new string(text);
+                if (ConnectionCipher.IsNew(encoded)) return ConnectionCipher.DecryptWithDefaultKey(encoded);
+                if (encoded.StartsWith("HPCF", StringComparison.Ordinal)) throw new CryptographicException("Unsupported cipher version.");
                 // Legacy DLL accepts plaintext SQL when a semicolon is present.
                 if (Array.IndexOf(text, ';') >= 0) return Encoding.UTF8.GetBytes(text);
                 for (int i = 0; i < text.Length; i++) { if (text[i] == '_') text[i] = '+'; else if (text[i] == '-') text[i] = '/'; else if (text[i] == '$') text[i] = '='; }

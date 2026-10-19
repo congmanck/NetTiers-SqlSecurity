@@ -6,6 +6,7 @@ using System.Text;
 
 namespace __DAL_NAMESPACE__.Security
 {
+    // Kind 1 stores either legacy cipher or HPCF2; wire values remain unchanged.
     internal enum DpapiContentKind : byte { LegacyCipher = 1, SqlConnection = 2, UpdateSettings = 3 }
 
     internal sealed class DpapiContent : IDisposable

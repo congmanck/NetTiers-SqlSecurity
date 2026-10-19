@@ -133,6 +133,8 @@ namespace __DAL_NAMESPACE__.Security
         private static byte[] PersistCipherConnection(string cipherConnection)
         {
             if (string.IsNullOrWhiteSpace(cipherConnection)) throw new ArgumentException("Chuỗi kết nối mã hóa không được để trống.");
+            // Decoder dispatches legacy/HPCF2 and reads HocPhi.dpk only for HPCF2.
+            // Persist the original cipher, never the transport token or a converted format.
             using (var verified = LegacyConnectionDecoder.Decode(cipherConnection)) { }
             byte[] data = Encoding.UTF8.GetBytes(cipherConnection);
             try

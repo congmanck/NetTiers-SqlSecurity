@@ -1091,6 +1091,7 @@
 			</Compile>
 <% if (ProviderInvariantName == "System.Data.SqlClient") { %>
             <Compile Include="<%=DALSubFolder%>Security\AuditRedaction.cs" />
+            <Compile Include="<%=DALSubFolder%>Security\ConnectionCipher.cs" />
             <Compile Include="<%=DALSubFolder%>Security\LegacyConnectionDecoder.cs" />
             <Compile Include="<%=DALSubFolder%>Security\SecureSqlDatabase.cs" />
             <Compile Include="<%=DALSubFolder%>Security\SessionReader.cs" />
