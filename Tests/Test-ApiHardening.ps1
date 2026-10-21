@@ -11,7 +11,13 @@ $master = [IO.File]::ReadAllText((Join-Path $base 'NetTiers.cst'))
 if ($master -notmatch '"ConnectionCipher.cs"') { throw 'Cipher generator registration missing.' }
 if ($master -notmatch '"SqlConfiguration.cs"' -or !$master.Contains('AddFileNode(commonNode, "Security\\" + securityFile)')) { throw 'Generator project registration missing.' }
 $projectTemplate = [IO.File]::ReadAllText((Join-Path $base 'VisualStudio\vsnet2005.project.cst'))
-if (!$projectTemplate.Contains('Security\ConnectionCipher.cs')) { throw 'Cipher Compile Include missing.' }
+$securityFilesMatch = [regex]::Match($master, 'string\[\] securityFiles = new string\[\] \{(?<files>[^}]+)\}')
+if (!$securityFilesMatch.Success) { throw 'Security generator file list missing.' }
+foreach ($fileMatch in [regex]::Matches($securityFilesMatch.Groups['files'].Value, '"(?<name>[^"]+\.cs)"')) {
+    $name = $fileMatch.Groups['name'].Value
+    $include = '<Compile Include="<%=DALSubFolder%>Security\' + $name + '"'
+    if (!$projectTemplate.Contains($include)) { throw "Security Compile Include missing: $name" }
+}
 foreach ($name in @('ConnectionCipher','LegacyConnectionDecoder','SqlConfiguration','DpapiConnectionFile')) {
     $canonical = [IO.File]::ReadAllText((Join-Path $base ('..\HocPhiChung2026\Accounts.Data\Security\' + $name + '.cs'))).Replace('Accounts.Data','__DAL_NAMESPACE__').Replace("`r`n","`n")
     $asset = [IO.File]::ReadAllText((Join-Path $base ('SecuritySource\' + $name + '.cs.txt'))).Replace("`r`n","`n")
