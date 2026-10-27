@@ -1,4 +1,7 @@
-param([string] $CodeSmith = 'C:\Program Files (x86)\CodeSmith\v7.1\cs.exe')
+param(
+    [string] $CodeSmith = 'C:\Program Files (x86)\CodeSmith\v7.1\cs.exe',
+    [string] $MSBuild = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe'
+)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 if (!(Test-Path -LiteralPath $CodeSmith)) { throw 'CodeSmith Generator 7.1 is required for this engine test.' }
@@ -12,6 +15,35 @@ $xml = '<codeSmith xmlns="http://www.codesmithtools.com/schema/csp.xsd"><propert
 if ($LASTEXITCODE -ne 0) { throw 'Password template engine test failed.' }
 $result = Get-Content -Raw -LiteralPath (Join-Path $folder 'result.txt')
 if (([regex]::Matches($result, 'PASSWORD_ASSET_PASS')).Count -ne 2 -or ([regex]::Matches($result, 'PROJECT_FRAMEWORK_PASS')).Count -ne 24) { throw 'Incomplete generation test matrix.' }
+if ($result -notmatch 'HOCPHI_INTEGRATION_PASS') { throw 'Missing HocPhi integration generation checks.' }
+if (!(Test-Path -LiteralPath $MSBuild)) { throw 'MSBuild is required to verify generated integration project items.' }
+foreach ($scenario in @(
+    @('Data', 'Accounts.Data', 'Security\PasswordStoragePolicy.user.cs'),
+    @('SqlClient', 'Accounts.Data.SqlClient', 'SqlTaiKhoanProvider.PasswordSecurity.user.cs')
+)) {
+    $projectDirectory = Join-Path $folder ('HocPhiIntegration\' + $scenario[1])
+    $generatedProject = Join-Path $projectDirectory ($scenario[1] + '.csproj')
+    $document = [Xml.XmlDocument]::new()
+    $document.Load((Join-Path $folder ($scenario[0] + '-v4_8-True.csproj')))
+    $namespace = $document.DocumentElement.NamespaceURI
+    $target = $document.CreateElement('Target', $namespace)
+    $target.SetAttribute('Name', 'VerifyPasswordIntegration')
+    $items = $document.CreateElement('ItemGroup', $namespace)
+    $item = $document.CreateElement('PasswordIntegrationItem', $namespace)
+    $item.SetAttribute('Include', '@(Compile)')
+    $item.SetAttribute('Condition', "'%(Compile.Identity)' == '$($scenario[2])'")
+    $null = $items.AppendChild($item)
+    $null = $target.AppendChild($items)
+    $errorTask = $document.CreateElement('Error', $namespace)
+    $errorTask.SetAttribute('Condition', "'@(PasswordIntegrationItem->Count())' != '1'")
+    $errorTask.SetAttribute('Text', 'Expected exactly one compiled password integration file.')
+    $null = $target.AppendChild($errorTask)
+    $null = $document.DocumentElement.AppendChild($target)
+    $document.Save($generatedProject)
+    & $MSBuild $generatedProject /t:VerifyPasswordIntegration /nologo /v:minimal
+    if ($LASTEXITCODE -ne 0) { throw "Integration file is not included exactly once: $($scenario[1])" }
+    Write-Output "HOCPHI_PROJECT_ITEMS_PASS: $($scenario[1])"
+}
 $compiler = Join-Path $env:WINDIR 'Microsoft.NET/Framework/v4.0.30319/csc.exe'
 foreach ($namespace in @('Accounts.Data', 'PortingTrial.Data')) {
     $source = Join-Path $folder "$namespace/Security/PasswordHasher.cs"
