@@ -27,6 +27,9 @@ string entlibVersionText = GetEntLibVersionSignature(EntLibVersion);
 		<section name="enterpriseLibrary.ConfigurationSource" type="Microsoft.Practices.EnterpriseLibrary.Common.Configuration.ConfigurationSourceSection, Microsoft.Practices.EnterpriseLibrary.Common, <%= entlibVersionText %>" />
   </configSections>
   
+  <appSettings>
+    <add key="AutoUpgradeSqlEncryption" value="true" />
+  </appSettings>
   <connectionStrings>
     <add name="netTiersConnectionString" connectionString="<%=ConnectionString%>" />
   </connectionStrings>

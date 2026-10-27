@@ -33,10 +33,258 @@ internal static class ApiSurfaceProbe
         try { return SqlConfiguration.CreateManualSession(previous, server, database, user, chars); }
         finally { Array.Clear(chars, 0, chars.Length); }
     }
-    static int Main()
+    static SqlConnectionStringBuilder Options(string reference)
+    {
+        return new SqlConnectionStringBuilder(SqlSessions.GetSafeConnectionString(reference));
+    }
+    static string CreateEncrypted(string previous, string user, string password, bool encrypt)
+    {
+        char[] chars = password.ToCharArray();
+        try { return SqlConfiguration.CreateManualSession(previous, "localhost", "TransportTests", user, chars, encrypt); }
+        finally { Array.Clear(chars, 0, chars.Length); }
+    }
+    static void TransportDefaults()
+    {
+        string fresh = Create(null, "localhost", "TransportTests", "synthetic", "test-password");
+        Check(Options(fresh).Encrypt && !Options(fresh).TrustServerCertificate);
+        string disabled = CreateEncrypted(fresh, "synthetic", "", false);
+        Check(!Options(disabled).Encrypt && Credential(disabled) == Credential(fresh));
+        Check(Options(fresh).Encrypt); // Editing a candidate must not mutate the active session.
+        string integrated = CreateEncrypted(null, "", "", false);
+        Check(!Options(integrated).Encrypt && Options(integrated).IntegratedSecurity);
+        using (var lease = SqlSessions.Acquire(integrated))
+        using (var connection = lease.CreateConnection()) Check(connection.Credential == null);
+        foreach (string flags in new[] { "", "Encrypt=False;TrustServerCertificate=True;", "Encrypt=True;TrustServerCertificate=True;" })
+        {
+            string legacy = SqlSessions.ProtectReference("Server=localhost;Database=Legacy;Integrated Security=True;" + flags);
+            var before = Options(legacy);
+            Check(before.Encrypt == flags.StartsWith("Encrypt=True"));
+            Check(before.ShouldSerialize("Encrypt") == (flags.Length > 0));
+            string preserved = Create(legacy, "localhost", "TransportTests", "", "");
+            Check(Options(preserved).Encrypt == before.Encrypt && Options(preserved).TrustServerCertificate == before.TrustServerCertificate);
+            Check(Options(preserved).ShouldSerialize("Encrypt") == before.ShouldSerialize("Encrypt"));
+            string secure = CreateEncrypted(legacy, "", "", true);
+            Check(Options(secure).Encrypt && !Options(secure).TrustServerCertificate);
+            string plain = CreateEncrypted(legacy, "", "", false);
+            Check(!Options(plain).Encrypt);
+            Check(Options(legacy).Encrypt == before.Encrypt);
+            foreach (string reference in new[] { legacy, preserved, secure, plain }) SqlSessions.Retire(reference);
+        }
+        foreach (string reference in new[] { fresh, disabled, integrated }) SqlSessions.Retire(reference);
+    }
+    static void TransportPersistence()
+    {
+        foreach (bool encrypt in new[] { true, false })
+        {
+            string candidate = CreateEncrypted(null, "", "", encrypt);
+            SqlConfiguration.SaveSession(candidate);
+            var recovered = Options(SqlConfiguration.RuntimeConnectionKey);
+            Check(recovered.Encrypt == encrypt && !recovered.TrustServerCertificate && recovered.IntegratedSecurity);
+            SqlSessions.Retire(candidate);
+        }
+        string file = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "HocPhi.dpa");
+        byte[] previous = File.ReadAllBytes(file);
+        var config = ConfigurationManager.OpenExeConfiguration(ConfigurationUserLevel.None);
+        config.ConnectionStrings.ConnectionStrings.Remove("netTiersConnectionString");
+        config.Save(ConfigurationSaveMode.Modified);
+        ConfigurationManager.RefreshSection("connectionStrings");
+        byte[] configBefore = File.ReadAllBytes(config.FilePath);
+        string failedCandidate = CreateEncrypted(null, "", "", true);
+        RejectLifecycle(() => SqlConfiguration.SaveSession(failedCandidate));
+        Check(File.ReadAllBytes(file).SequenceEqual(previous));
+        Check(File.ReadAllBytes(config.FilePath).SequenceEqual(configBefore));
+        Check(!Options(SqlConfiguration.RuntimeConnectionKey).Encrypt);
+        SqlSessions.Retire(failedCandidate);
+        config = ConfigurationManager.OpenExeConfiguration(ConfigurationUserLevel.None);
+        config.ConnectionStrings.ConnectionStrings.Add(new ConnectionStringSettings("netTiersConnectionString", ""));
+        config.Save(ConfigurationSaveMode.Modified);
+        ConfigurationManager.RefreshSection("connectionStrings");
+    }
+    static string FreshDpapi(string flags)
+    {
+        string source = SqlSessions.ProtectReference("Server=localhost;Database=AutoTls;User ID=synthetic;Password=test-password;Connect Timeout=17;" + flags);
+        SqlConfiguration.SaveSession(source);
+        SqlSessions.Retire(source);
+        return SqlConfiguration.RuntimeConnectionKey;
+    }
+    static string DpaPath { get { return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "HocPhi.dpa"); } }
+    static void SetAutoUpgrade(bool? enabled)
+    {
+        var config = ConfigurationManager.OpenExeConfiguration(ConfigurationUserLevel.None);
+        config.AppSettings.Settings.Remove("AutoUpgradeSqlEncryption");
+        if (enabled.HasValue) config.AppSettings.Settings.Add("AutoUpgradeSqlEncryption", enabled.Value.ToString());
+        config.Save(ConfigurationSaveMode.Modified);
+        ConfigurationManager.RefreshSection("appSettings");
+    }
+    static void AutomaticUpgradeChecks()
+    {
+        var field = typeof(SqlConfiguration).GetField("encryptionProbe", BindingFlags.Static | BindingFlags.NonPublic);
+        object productionProbe = field.GetValue(null);
+        int probes = 0;
+        Func<SqlSession, bool> success = session =>
+        {
+            System.Threading.Interlocked.Increment(ref probes);
+            var options = new SqlConnectionStringBuilder(session.ConnectionString);
+            Check(options.Encrypt && !options.TrustServerCertificate && options.ConnectTimeout == 3 && options.DataSource.StartsWith("tcp:"));
+            return true; // Simulates a certificate-validated TCP/DMV success; no SQL opened in unit tests.
+        };
+        try
+        {
+            string current = FreshDpapi("Encrypt=False;");
+            byte[] before = File.ReadAllBytes(DpaPath);
+            field.SetValue(null, new Func<SqlSession, bool>(session => { probes++; return false; }));
+            Check(SqlConfiguration.TryUpgradeDpapiEncryption(current, value => { throw new Exception("Unexpected callback"); }) == current);
+            Check(SqlConfiguration.TryUpgradeDpapiEncryption(current, null) == current && probes == 1);
+            Check(File.ReadAllBytes(DpaPath).SequenceEqual(before));
+            field.SetValue(null, success);
+            foreach (string flags in new[] { "", "Encrypt=False;" })
+            {
+                current = FreshDpapi(flags);
+                string loaded = null;
+                string upgraded = SqlConfiguration.TryUpgradeDpapiEncryption(current, value => loaded = value);
+                Check(upgraded != current && loaded == upgraded && SqlConfiguration.RuntimeConnectionKey == upgraded);
+                Check(Options(upgraded).Encrypt && !Options(upgraded).TrustServerCertificate && Options(upgraded).ConnectTimeout == 17);
+                Check(Credential(upgraded) == "test-password");
+                RejectLifecycle(() => SqlSessions.Acquire(current));
+                int count = probes;
+                Check(SqlConfiguration.TryUpgradeDpapiEncryption(upgraded, null) == upgraded && probes == count);
+            }
+            current = FreshDpapi("Encrypt=False;");
+            SetAutoUpgrade(false);
+            int disabledCount = probes;
+            Check(SqlConfiguration.TryUpgradeDpapiEncryption(current, null) == current && disabledCount == probes);
+            SetAutoUpgrade(null);
+
+            current = FreshDpapi("Encrypt=False;");
+            before = File.ReadAllBytes(DpaPath);
+            string restored = null;
+            string old = current;
+            Check(SqlConfiguration.TryUpgradeDpapiEncryption(current, value =>
+            {
+                if (value != old) throw new InvalidOperationException("Synthetic provider failure");
+                restored = value;
+            }) == old);
+            Check(restored == old && File.ReadAllBytes(DpaPath).SequenceEqual(before));
+            Check(SqlConfiguration.RuntimeConnectionKey == old && !Options(old).Encrypt);
+
+            current = FreshDpapi("Encrypt=False;");
+            before = File.ReadAllBytes(DpaPath);
+            using (var locked = File.Open(DpaPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+                Check(SqlConfiguration.TryUpgradeDpapiEncryption(current, value => { throw new Exception("Unexpected reload"); }) == current);
+            Check(File.ReadAllBytes(DpaPath).SequenceEqual(before));
+
+            current = FreshDpapi("Encrypt=False;");
+            using (var entered = new System.Threading.ManualResetEventSlim())
+            using (var release = new System.Threading.ManualResetEventSlim())
+            {
+                int blockedProbes = 0;
+                field.SetValue(null, new Func<SqlSession, bool>(session =>
+                {
+                    System.Threading.Interlocked.Increment(ref blockedProbes);
+                    entered.Set();
+                    return release.Wait(10000);
+                }));
+                string captured = current;
+                var worker = System.Threading.Tasks.Task.Factory.StartNew(() => SqlConfiguration.TryUpgradeDpapiEncryption(captured, null));
+                try
+                {
+                    Check(entered.Wait(5000));
+                    var read = System.Threading.Tasks.Task.Factory.StartNew(() => SqlConfiguration.RuntimeConnectionKey);
+                    Check(read.Wait(2000) && read.Result == current); // Network must not hold SessionGate.
+                    Check(SqlConfiguration.TryUpgradeDpapiEncryption(current, null) == current && blockedProbes == 1);
+                    string changed = FreshDpapi("Encrypt=False;"); // Simulates a manual save while the probe waits.
+                    byte[] changedFile = File.ReadAllBytes(DpaPath);
+                    release.Set();
+                    Check(worker.Wait(5000) && worker.Result == changed);
+                    Check(File.ReadAllBytes(DpaPath).SequenceEqual(changedFile) && !Options(changed).Encrypt);
+                }
+                finally { release.Set(); worker.Wait(10000); }
+            }
+            field.SetValue(null, success);
+            current = FreshDpapi("Encrypt=False;");
+            before = File.ReadAllBytes(DpaPath);
+            string ready = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "mutex-ready");
+            var start = new System.Diagnostics.ProcessStartInfo(Assembly.GetExecutingAssembly().Location, "hold-config-lock")
+            {
+                UseShellExecute = false, RedirectStandardInput = true, CreateNoWindow = true,
+                WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden
+            };
+            using (var child = System.Diagnostics.Process.Start(start))
+            {
+                try
+                {
+                    var watch = System.Diagnostics.Stopwatch.StartNew();
+                    while (!File.Exists(ready) && watch.ElapsedMilliseconds < 5000) System.Threading.Thread.Sleep(20);
+                    Check(File.Exists(ready));
+                    Check(SqlConfiguration.TryUpgradeDpapiEncryption(current, null) == current);
+                    Check(File.ReadAllBytes(DpaPath).SequenceEqual(before));
+                }
+                finally
+                {
+                    child.StandardInput.WriteLine();
+                    if (!child.WaitForExit(5000)) child.Kill();
+                    if (File.Exists(ready)) File.Delete(ready);
+                }
+            }
+        }
+        finally { SetAutoUpgrade(null); field.SetValue(null, productionProbe); }
+    }
+    static void CipherUpgradeCheck(bool modern)
+    {
+        var field = typeof(SqlConfiguration).GetField("encryptionProbe", BindingFlags.Static | BindingFlags.NonPublic);
+        object previous = field.GetValue(null);
+        try
+        {
+            field.SetValue(null, new Func<SqlSession, bool>(session => true));
+            string current = SqlConfiguration.RuntimeConnectionKey;
+            string upgraded = SqlConfiguration.TryUpgradeDpapiEncryption(current, null);
+            Check(upgraded != current && Options(upgraded).Encrypt);
+            var type = typeof(SqlConfiguration).Assembly.GetType("__DAL_NAMESPACE__.Security.DpapiConnectionFile");
+            object content = type.GetMethod("Read").Invoke(null, new object[] { File.ReadAllBytes(DpaPath) });
+            try
+            {
+                Check(Convert.ToInt32(content.GetType().GetProperty("Kind").GetValue(content, null)) == 1);
+                byte[] payload = (byte[])content.GetType().GetProperty("Data").GetValue(content, null);
+                Check(ConnectionCipher.IsNew(Encoding.UTF8.GetString(payload)) == modern);
+            }
+            finally { ((IDisposable)content).Dispose(); }
+            if (modern)
+            {
+                string keyFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "HocPhi.dpk");
+                string backup = keyFile + ".tls-test";
+                File.Move(keyFile, backup);
+                bool keyRequired = false;
+                try
+                {
+                    var decoder = typeof(SqlConfiguration).Assembly.GetType("__DAL_NAMESPACE__.Security.LegacyConnectionDecoder");
+                    try
+                    {
+                        object decoded = decoder.GetMethod("DecodeFileBytes").Invoke(null, new object[] { File.ReadAllBytes(DpaPath), null });
+                        ((IDisposable)decoded).Dispose();
+                    }
+                    catch (TargetInvocationException error) { keyRequired = error.InnerException is IOException || error.InnerException is CryptographicException; }
+                    Check(keyRequired); // Upgrading TLS must not remove HPCF2 key dependency.
+                }
+                finally { File.Move(backup, keyFile); }
+            }
+        }
+        finally { field.SetValue(null, previous); }
+    }
+    static int Main(string[] args)
     {
         try
         {
+            if (args.Length == 1 && args[0] == "hold-config-lock")
+            {
+                var method = typeof(SqlConfiguration).GetMethod("AcquireConfigurationWriteLock", BindingFlags.Static | BindingFlags.NonPublic);
+                using ((IDisposable)method.Invoke(null, null))
+                {
+                    File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "mutex-ready"), "ready");
+                    Console.ReadLine();
+                }
+                return 0;
+            }
+            TransportDefaults();
             byte[] vectorKey = new byte[64]; for (int i = 0; i < 64; i++) vectorKey[i] = (byte)i;
             byte[] vectorPlain = ConnectionCipher.Decrypt("HPCF2.AgABAgMEBQYHCAkKCwwNDg/y7kAihyx7dbzOOSck1Do8C8xkYLyGMXq2gtTWHovJt/Q12hUlbJMsPuN+YrF5JHRRfOLUV+mSg+jSHG1lcBrS9RBPSHvsrp+HvQUhHlHS4NfbLDS9rCPBlu478D2ebE2TBxf4HnFx0IcFDdDJcYot", vectorKey);
             Check(Encoding.UTF8.GetString(vectorPlain) == "Server=localhost;Database=CipherVector;Integrated Security=True;");
@@ -74,21 +322,44 @@ internal static class ApiSurfaceProbe
             Check(File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "HocPhi.dpa")));
             string recovered = SqlConfiguration.RuntimeConnectionKey;
             Check(Credential(recovered) == Credential(next));
+            TransportPersistence();
+            AutomaticUpgradeChecks();
             string keyPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "HocPhi.dpk");
             File.WriteAllBytes(keyPath, vectorKey);
-            byte[] modernPlain = Encoding.UTF8.GetBytes("Server=localhost;Database=ModernApi;User ID=synthetic;Password=\"test; unicode-đ\";");
             try
             {
-                foreach (string cipher in new[] { ConnectionCipher.EncryptLegacy(modernPlain), ConnectionCipher.Encrypt(modernPlain, vectorKey) })
+                foreach (string flags in new[] { "", "Encrypt=False;TrustServerCertificate=True;", "Encrypt=True;TrustServerCertificate=False;" })
                 {
-                    string imported = SqlConfiguration.CreateSessionFromToken(ConnectionToken.Create(cipher, 5, vectorKey));
-                    Check(Credential(imported) == "test; unicode-đ");
-                    SqlConfiguration.SaveSession(imported);
-                    Check(Credential(SqlConfiguration.RuntimeConnectionKey) == "test; unicode-đ");
-                    SqlSessions.Retire(imported);
+                    byte[] modernPlain = Encoding.UTF8.GetBytes("Server=localhost;Database=ModernApi;User ID=synthetic;Password=\"test; unicode-đ\";" + flags);
+                    try
+                    {
+                        foreach (string cipher in new[] { ConnectionCipher.EncryptLegacy(modernPlain), ConnectionCipher.Encrypt(modernPlain, vectorKey) })
+                        {
+                            string token = ConnectionToken.Create(cipher, 5, vectorKey);
+                            string ignoredCipher;
+                            Check(ConnectionToken.TryOpen(token, vectorKey, DateTime.UtcNow.AddMinutes(6), out ignoredCipher) == ConnectionTokenStatus.Expired);
+                            string imported = SqlConfiguration.CreateSessionFromToken(token);
+                            Check(Credential(imported) == "test; unicode-đ");
+                            Check(Options(imported).Encrypt == flags.StartsWith("Encrypt=True"));
+                            Check(Options(imported).TrustServerCertificate == flags.Contains("TrustServerCertificate=True"));
+                            Check(Options(imported).ShouldSerialize("Encrypt") == (flags.Length > 0));
+                            SqlConfiguration.SaveSession(imported);
+                            string recoveredToken = SqlConfiguration.RuntimeConnectionKey;
+                            Check(Credential(recoveredToken) == "test; unicode-đ");
+                            Check(Options(recoveredToken).Encrypt == Options(imported).Encrypt);
+                            Check(Options(recoveredToken).TrustServerCertificate == Options(imported).TrustServerCertificate);
+                            if (flags.Length == 0) CipherUpgradeCheck(ConnectionCipher.IsNew(cipher));
+                            SqlSessions.Retire(imported);
+                        }
+                    }
+                    finally { Array.Clear(modernPlain, 0, modernPlain.Length); }
                 }
+                bool invalid = false;
+                try { SqlConfiguration.CreateSessionFromToken("invalid-token"); }
+                catch (InvalidConnectionTokenException) { invalid = true; }
+                Check(invalid);
             }
-            finally { File.Delete(keyPath); Array.Clear(modernPlain, 0, modernPlain.Length); Array.Clear(vectorKey, 0, vectorKey.Length); }
+            finally { File.Delete(keyPath); Array.Clear(vectorKey, 0, vectorKey.Length); }
             string retiring = Create(null, "localhost", "LeaseTest", "test-user", "synthetic-only");
             var active = SqlSessions.Acquire(retiring);
             SqlSessions.Retire(retiring);

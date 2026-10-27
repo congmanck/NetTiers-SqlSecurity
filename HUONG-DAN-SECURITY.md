@@ -91,3 +91,27 @@ Generate lại giữ file custom giống asset. Nếu file đích đã có chỉ
 Lỗi CS0246 `PasswordStoragePolicy` và CS1061 hai phương thức provider sau regenerate trên máy khác được xử lý bằng việc cập nhật **toàn bộ** các file template/asset nói trên, bật tùy chọn rồi generate lại. Nếu vẫn lỗi, kiểm tra profile trỏ đúng `NetTiers.cst` đã cập nhật và reload project trong Visual Studio trước Rebuild Solution. Không cần đổi dòng gọi trong `PasswordSecurity.cs`.
 
 Kiểm thử bổ sung bằng engine thật: output tích hợp mới, generate lặp lại, mặc định tắt, tự bật hasher, từ chối namespace sai và bảo toàn custom khác asset. MSBuild kiểm tra hai project sinh ra thực sự có đúng một Compile item cho từng file tích hợp, không chỉ kiểm tra file có tồn tại trên đĩa. Các test này không kết nối SQL hoặc sửa profile sản xuất.
+
+### Tương thích Encrypt=False — 27/10/2026
+
+- SqlConfiguration.CreateManualSession tạo kết nối mới mặc định Encrypt=True, TrustServerCertificate=False. Overload mới nhận bool encrypt để UI cho phép chọn False. Overload cũ giữ nguyên tùy chọn của phiên cũ, hoặc dùng mặc định an toàn nếu tạo mới.
+- Không ép TLS trong SqlSession hoặc decoder: cấu hình đã lưu và token giữ nguyên cờ khi đọc/import. Với overload mới, chọn True luôn xác minh chứng thư; chọn False không tự yêu cầu mã hóa toàn phiên. Không fallback khi TLS lỗi.
+- SaveSession khôi phục DPAPI trước đó nếu cập nhật cấu hình thất bại. Token/cipher không bị đổi dạng để thay cờ TLS. Không log dữ liệu cấu hình rõ.
+- Asset provider HocPhi bỏ điều kiện TLS trong GetPasswordStoragePolicy: PBKDF2 hoạt động với cả Encrypt=True và False. Đây là hai lớp bảo vệ độc lập; vẫn khuyến nghị TLS khi môi trường đáp ứng.
+- Generator nhận dạng chính xác provider từ bản asset cũ trong SecuritySource/HocPhi/Previous, sao lưu rồi tự cập nhật sang bản không chặn Encrypt=False. Tên backup không chứa `.user.` để không bị Compile wildcard đưa vào build. Chỉnh sửa riêng không khớp bản cũ vẫn được bảo toàn và yêu cầu merge.
+- HocPhi frmConfig cần bản UI có checkbox Encrypt cùng DLL mới. Template chỉ cập nhật DAL; không sinh lại màn hình cấu hình riêng của ứng dụng.
+- Tests/Test-ApiHardening.ps1 hiện có 138 kiểm tra cho mỗi namespace, bao gồm mặc định, giữ cấu hình cũ, token hai định dạng/các trạng thái TLS, DPAPI round-trip và rollback khi lưu lỗi. Tests/Test-PasswordHasher.ps1 kiểm tra thêm nâng cấp provider cũ cùng đăng ký project bằng engine/MSBuild thật. Không cài chứng thư hoặc sửa server tự động.
+
+### Tự thử TLS rồi cập nhật DPAPI — 27/10/2026
+
+SecuritySource/SqlEncryptionUpgrade.cs.txt được sinh vào DAL và đăng ký Compile. SqlConfiguration là static partial; phải cập nhật cả SqlConfiguration.cs và SqlEncryptionUpgrade.cs cùng lúc. App.config template sinh appSettings AutoUpgradeSqlEncryption=true; thiếu key cũng mặc định bật. Đặt false và khởi động lại để giữ cấu hình False lâu dài.
+
+API `TryUpgradeDpapiEncryption(currentReference, reloadProvider)` thử tối đa một lần cho mỗi phiên bản DPAPI trong mỗi tiến trình. Chỉ gọi ở bootstrap/đăng nhập đang nhàn rỗi; callback chỉ reload metadata, không mở kết nối SQL, và phải nhận lại reference cũ khi rollback. Caller phải bind provider với reference hiện hành trước khi gọi và dùng reference trả về. Không đưa API này vào constructor SqlSession hoặc từng câu SQL.
+
+DPAPI thiếu Encrypt hoặc đang False được thử TCP + Encrypt=True + TrustServerCertificate=False; probe cần DMV encrypt_option=TRUE và net_transport=TCP. Probe timeout kết nối/query 3 giây, không giữ SessionGate/file mutex lúc chờ mạng. Probe lỗi không thay file/phiên cũ, không hiện modal và không downgrade cấu hình True.
+
+Commit dùng named mutex Global theo đường dẫn cùng fingerprint kiểm tra lại; các writer cấu hình trong SqlConfiguration tham gia cùng mutex. Lưu atomic, verify DPAPI và reload metadata thành công trước khi publish reference. Backup giữ tới khi callback thành công; lỗi khôi phục file/provider cũ, lỗi recovery phải dừng. Không bỏ phụ thuộc khóa HPCF2 hoặc đổi kind/chuẩn cipher. Phiên chính giữ timeout cũ và dùng TCP đã kiểm tra.
+
+HocPhi/Common/SqlProviderConfiguration.cs tích hợp API vào frmMain và frmDangNhap, cập nhật cả default provider, ConnectionScope của UI và Utility.connection. Các ứng dụng khác dùng template phải tích hợp callback riêng; chỉ regenerate DAL không tự chèn bootstrap vào UI riêng của ứng dụng. Token/App.config không bị viết lại bởi API; nguồn chưa là DPAPI phải qua migration hiện có trước.
+
+Tests/Test-ApiHardening.ps1 hiện đạt 178 kiểm tra cho mỗi namespace, bao gồm fake-probe thành công/thất bại, chống lặp, rollback provider/file, writer đồng thời, mutex giữa hai tiến trình và cipher/key HPCF2 sau upgrade. Tests/Framework48Probe.cst và PasswordHasherProbe.cst kiểm tra mặc định appSetting và Compile Include mới bằng engine. Các unit test không mở SQL; TLS thật với chứng thư tin cậy còn là bước nghiệm thu môi trường.

@@ -1,4 +1,4 @@
-﻿<%@ CodeTemplate Src="../TemplateLib/CommonSqlCode.cs" Inherits="MoM.Templates.CommonSqlCode" Language="C#" TargetLanguage="Text" CompilerVersion="v3.5" %>
+<%@ CodeTemplate Src="../TemplateLib/CommonSqlCode.cs" Inherits="MoM.Templates.CommonSqlCode" Language="C#" TargetLanguage="Text" CompilerVersion="v3.5" %>
 <%@ Assembly Name="SchemaExplorer" %>
 <%@ Assembly Name="SchemaExplorer.SqlSchemaProvider" %>
 <%@ Assembly Name="System.Design" %>
@@ -37,6 +37,8 @@ config.SetProperty("EntLibVersion", EntLibVersion.v3_1);
 string configText = config.RenderToString();
 XmlDocument configXml = new XmlDocument(); configXml.LoadXml(configText);
 if (configXml.SelectSingleNode("/configuration/startup/supportedRuntime/@sku").Value != ".NETFramework,Version=v4.8") throw new Exception("Wrong runtime configuration.");
+XmlNode autoTls = configXml.SelectSingleNode("/configuration/appSettings/add[@key='AutoUpgradeSqlEncryption']/@value");
+if (autoTls == null || autoTls.Value != "true") throw new Exception("Missing automatic TLS upgrade default.");
 if (configText != config.RenderToString()) throw new Exception("Config generation changed on repeat.");
 File.WriteAllText(Path.Combine(TrialOutput, "FrameworkTrial.config"), configText);
 config.Dispose();
@@ -79,6 +81,7 @@ foreach (DotNetFrameworkVersion version in new DotNetFrameworkVersion[] { DotNet
     XmlDocument xml = new XmlDocument(); xml.LoadXml(first);
     XmlNode target = xml.SelectSingleNode("//*[local-name()='TargetFrameworkVersion']");
     if (target == null || target.InnerText != "v4.8") throw new Exception("Wrong generated target.");
+    if (first.Contains("Security\\SqlEncryptionUpgrade.cs") != (role == "Data")) throw new Exception("Wrong automatic TLS source registration.");
     if (!first.Contains("System.ComponentModel.DataAnnotations")) throw new Exception("Missing modern framework reference.");
     File.WriteAllText(Path.Combine(TrialOutput, role + "-" + version.ToString() + ".csproj"), first);
     Response.WriteLine("PROJECT_FRAMEWORK_PASS " + role + " " + version.ToString() + " -> v4.8; repeat generation identical");

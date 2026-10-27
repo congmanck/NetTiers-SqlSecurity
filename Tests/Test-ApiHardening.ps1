@@ -18,7 +18,7 @@ foreach ($fileMatch in [regex]::Matches($securityFilesMatch.Groups['files'].Valu
     $include = '<Compile Include="<%=DALSubFolder%>Security\' + $name + '"'
     if (!$projectTemplate.Contains($include)) { throw "Security Compile Include missing: $name" }
 }
-foreach ($name in @('ConnectionCipher','LegacyConnectionDecoder','SqlConfiguration','DpapiConnectionFile')) {
+foreach ($name in @('ConnectionCipher','LegacyConnectionDecoder','SqlConfiguration','SqlEncryptionUpgrade','DpapiConnectionFile')) {
     $canonical = [IO.File]::ReadAllText((Join-Path $base ('..\HocPhiChung2026\Accounts.Data\Security\' + $name + '.cs'))).Replace('Accounts.Data','__DAL_NAMESPACE__').Replace("`r`n","`n")
     $asset = [IO.File]::ReadAllText((Join-Path $base ('SecuritySource\' + $name + '.cs.txt'))).Replace("`r`n","`n")
     if ($canonical -cne $asset) { throw "Security source drift: $name" }
@@ -30,7 +30,7 @@ foreach ($template in Get-ChildItem $base -Recurse -Filter '*.cst') {
 foreach ($namespace in @('Accounts.Data','PortingTrial.Data')) {
     $folder = Join-Path $output $namespace
     New-Item -ItemType Directory -Path $folder | Out-Null
-    $sources = foreach ($name in @('ConnectionCipher','SqlSession','SqlConfiguration','ConnectionToken','DpapiConnectionFile','LegacyConnectionDecoder')) {
+    $sources = foreach ($name in @('ConnectionCipher','SqlSession','SqlConfiguration','SqlEncryptionUpgrade','ConnectionToken','DpapiConnectionFile','LegacyConnectionDecoder')) {
         $asset = [IO.File]::ReadAllText((Join-Path $base ('SecuritySource\' + $name + '.cs.txt')))
         if (!$asset.Contains('__DAL_NAMESPACE__')) { throw "Namespace marker missing: $name" }
         $path = Join-Path $folder ($name + '.cs')

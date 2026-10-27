@@ -2007,7 +2007,7 @@
             {
                 string securityDirectory = Path.Combine(rootPathDAL, "Security");
                 Directory.CreateDirectory(securityDirectory);
-                string[] securityFiles = new string[] { "ConnectionCipher.cs","AuditRedaction.cs","ConnectionToken.cs","DpapiConnectionFile.cs","LegacyConnectionDecoder.cs","SecureSqlDatabase.cs","SessionReader.cs","SqlSession.cs","SqlConfiguration.cs" };
+                string[] securityFiles = new string[] { "ConnectionCipher.cs","AuditRedaction.cs","ConnectionToken.cs","DpapiConnectionFile.cs","LegacyConnectionDecoder.cs","SecureSqlDatabase.cs","SessionReader.cs","SqlSession.cs","SqlConfiguration.cs","SqlEncryptionUpgrade.cs" };
                 foreach (string securityFile in securityFiles)
                 {
                     string sourceFile = Path.Combine(this.CodeTemplateInfo.DirectoryName, "SecuritySource\\" + securityFile + ".txt");
@@ -4903,17 +4903,33 @@
         string[] names = new string[] { "PasswordStoragePolicy.user.cs", "SqlTaiKhoanProvider.PasswordSecurity.user.cs" };
         string[] destinations = new string[] { Path.Combine(dataPath, "Security\\" + names[0]), Path.Combine(sqlPath, names[1]) };
         string[] code = new string[names.Length];
+        bool[] upgrade = new bool[names.Length];
         // Validate every existing custom file before creating either destination.
         for (int i = 0; i < names.Length; i++)
         {
             code[i] = File.ReadAllText(Path.Combine(CodeTemplateInfo.DirectoryName, "SecuritySource\\HocPhi\\" + names[i] + ".txt"));
-            if (File.Exists(destinations[i]) && File.ReadAllText(destinations[i]).Replace("\r\n", "\n") != code[i].Replace("\r\n", "\n"))
-                throw new InvalidOperationException("Custom password integration differs; merge before regeneration: " + destinations[i]);
+            if (File.Exists(destinations[i]))
+            {
+                string existing = File.ReadAllText(destinations[i]).Replace("\r\n", "\n");
+                if (existing == code[i].Replace("\r\n", "\n")) continue;
+                string previous = Path.Combine(CodeTemplateInfo.DirectoryName, "SecuritySource\\HocPhi\\Previous\\" + names[i] + ".txt");
+                if (File.Exists(previous) && existing == File.ReadAllText(previous).Replace("\r\n", "\n"))
+                    upgrade[i] = true;
+                else
+                    throw new InvalidOperationException("Custom password integration differs; merge before regeneration: " + destinations[i]);
+            }
         }
         for (int i = 0; i < names.Length; i++)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(destinations[i]));
-            if (!File.Exists(destinations[i])) File.WriteAllText(destinations[i], code[i], Encoding.UTF8);
+            if (upgrade[i])
+            {
+                // Backups must not match the project's **\\*.user.* Compile glob.
+                string backup = Path.Combine(Path.GetDirectoryName(destinations[i]), names[i].Replace(".user.cs", ".pre-tls-" + Guid.NewGuid().ToString("N") + ".bak"));
+                File.Copy(destinations[i], backup, false);
+                File.WriteAllText(destinations[i], code[i], Encoding.UTF8);
+            }
+            else if (!File.Exists(destinations[i])) File.WriteAllText(destinations[i], code[i], Encoding.UTF8);
         }
         return true;
     }

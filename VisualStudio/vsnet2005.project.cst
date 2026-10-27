@@ -1103,6 +1103,7 @@
             <Compile Include="<%=DALSubFolder%>Security\SessionReader.cs" />
             <Compile Include="<%=DALSubFolder%>Security\SqlSession.cs" />
             <Compile Include="<%=DALSubFolder%>Security\SqlConfiguration.cs" />
+            <Compile Include="<%=DALSubFolder%>Security\SqlEncryptionUpgrade.cs" />
 <% } %>
 			<Compile Include="<%=DALSubFolder%>Utility.cs">
 			  <SubType>Code</SubType>

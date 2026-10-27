@@ -11,7 +11,7 @@ using System.Configuration;
 
 namespace __DAL_NAMESPACE__.Security
 {
-    public static class SqlConfiguration
+    public static partial class SqlConfiguration
     {
         public static string CreateSessionFromToken(string token)
         {
@@ -31,11 +31,25 @@ namespace __DAL_NAMESPACE__.Security
 
         public static string CreateManualSession(string currentReference, string server, string database, string userName, char[] enteredPassword)
         {
+            return CreateManualSessionCore(currentReference, server, database, userName, enteredPassword, null);
+        }
+
+        public static string CreateManualSession(string currentReference, string server, string database, string userName, char[] enteredPassword, bool encrypt)
+        {
+            return CreateManualSessionCore(currentReference, server, database, userName, enteredPassword, encrypt);
+        }
+
+        private static string CreateManualSessionCore(string currentReference, string server, string database, string userName, char[] enteredPassword, bool? encrypt)
+        {
             if (string.IsNullOrWhiteSpace(database)) throw new ArgumentException("Database required.");
             if (enteredPassword == null) throw new ArgumentNullException("enteredPassword");
             SqlSession current = null;
             if (SqlSessions.IsReference(currentReference)) current = SqlSessions.Resolve(currentReference);
             var options = new SqlConnectionStringBuilder(current == null ? "" : current.ConnectionString);
+            // Startup/import does not pass here: preserve legacy sessions and opaque tokens.
+            // The old overload preserves an existing session's transport options.
+            if (encrypt.HasValue || current == null) options.Encrypt = encrypt ?? true;
+            if (encrypt == true || current == null) options.TrustServerCertificate = false;
             options.DataSource = server; options.InitialCatalog = database; options.PersistSecurityInfo = false;
             options.IntegratedSecurity = string.IsNullOrEmpty(userName) && enteredPassword.Length == 0;
             if (!options.IntegratedSecurity && enteredPassword.Length == 0)
@@ -122,6 +136,7 @@ namespace __DAL_NAMESPACE__.Security
         }
         public static void SaveCipherConnectionToDpapi(string cipherConnection)
         {
+            using (AcquireConfigurationWriteLock())
             lock (SessionGate)
             {
                 PersistCipherConnection(cipherConnection);
@@ -264,6 +279,7 @@ namespace __DAL_NAMESPACE__.Security
         // The caller must have successfully opened SQL using checkedReference.
         public static void CompleteConfigurationAfterConnection(string checkedReference)
         {
+            using (AcquireConfigurationWriteLock())
             lock (SessionGate)
             {
                 if (!AutoConvertConnectionToDpapi || runtimeKey == null || checkedReference != runtimeKey) return;
@@ -299,6 +315,7 @@ namespace __DAL_NAMESPACE__.Security
         // Call only after SQL connectivity has been verified for this exact runtime reference.
         public static void MigrateLegacyDpapiAfterConnection(string checkedReference)
         {
+            using (AcquireConfigurationWriteLock())
             lock (SessionGate)
             {
                 if (!AutoConvertConnectionToDpapi || runtimeKey == null || checkedReference != runtimeKey
@@ -332,23 +349,40 @@ namespace __DAL_NAMESPACE__.Security
 
         public static void SaveSession(string reference)
         {
+            using (AcquireConfigurationWriteLock())
             lock (SessionGate)
             {
                 var session = SqlSessions.Resolve(reference);
-                if (session.ImportedCipher != null)
-                {
-                    PersistCipherConnection(session.ImportedCipher);
-                    ClearConfiguredConnection();
-                    session.ImportedCipher = null;
-                    return;
-                }
-                byte[] plain = SqlSessions.Resolve(reference).ExportStorageBytes();
+                string expected = ConfiguredValue();
+                byte[] previous = File.Exists(DpapiConnectionPath) ? File.ReadAllBytes(DpapiConnectionPath) : null;
                 try
                 {
-                    WriteConnectionFile(DpapiConnectionFile.Protect(DpapiContentKind.SqlConnection, plain));
-                    ClearConfiguredConnection();
+                    if (session.ImportedCipher != null)
+                    {
+                        PersistCipherConnection(session.ImportedCipher);
+                        ClearConfiguredConnection(expected);
+                        session.ImportedCipher = null;
+                        return;
+                    }
+                    byte[] plain = session.ExportStorageBytes();
+                    try
+                    {
+                        WriteConnectionFile(DpapiConnectionFile.Protect(DpapiContentKind.SqlConnection, plain));
+                        ClearConfiguredConnection(expected);
+                    }
+                    finally { Array.Clear(plain, 0, plain.Length); }
                 }
-                finally { Array.Clear(plain, 0, plain.Length); }
+                catch
+                {
+                    // A failed .config update must not activate the candidate on restart.
+                    if (previous == null)
+                    {
+                        if (File.Exists(DpapiConnectionPath)) File.Delete(DpapiConnectionPath);
+                    }
+                    else DpapiConnectionFile.WriteAtomic(DpapiConnectionPath, previous, path => { });
+                    throw;
+                }
+                finally { if (previous != null) Array.Clear(previous, 0, previous.Length); }
             }
         }
 

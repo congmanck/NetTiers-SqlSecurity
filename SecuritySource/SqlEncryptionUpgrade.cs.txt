@@ -1,0 +1,236 @@
+using System;
+using System.Collections.Generic;
+using System.Configuration;
+using System.Data.SqlClient;
+using System.Diagnostics;
+using System.IO;
+using System.Security.Cryptography;
+using System.Text;
+using System.Threading;
+
+namespace __DAL_NAMESPACE__.Security
+{
+    public static partial class SqlConfiguration
+    {
+        private static readonly HashSet<string> encryptionAttempts = new HashSet<string>(StringComparer.Ordinal);
+        private static Func<SqlSession, bool> encryptionProbe = ProbeEncryptedConnection;
+
+        /// <summary>
+        /// Best-effort upgrade of the active DPAPI source. The callback only reloads
+        /// provider metadata (no SQL/network); it must also accept the old reference for rollback.
+        /// </summary>
+        public static string TryUpgradeDpapiEncryption(string currentReference, Action<string> reloadProvider)
+        {
+            string sourcePath = null, configured = null, candidateReference = null;
+            byte[] original = null;
+            bool committed = false;
+            try
+            {
+                string enabled = ConfigurationManager.AppSettings["AutoUpgradeSqlEncryption"];
+                bool flag;
+                if (bool.TryParse(enabled, out flag) && !flag) return currentReference;
+                SqlSession current;
+                SqlConnectionStringBuilder options;
+                lock (SessionGate)
+                {
+                    if (currentReference != runtimeKey || runtimeSourcePath == null
+                        || !string.Equals(runtimeSourcePath, DpapiConnectionPath, StringComparison.OrdinalIgnoreCase)) return currentReference;
+                    current = SqlSessions.Resolve(currentReference);
+                    options = new SqlConnectionStringBuilder(current.ConnectionString);
+                    if (options.Encrypt) return currentReference;
+                    // Explicit named-pipe/shared-memory endpoints cannot prove TCP TLS.
+                    if (options.DataSource.StartsWith("np:", StringComparison.OrdinalIgnoreCase)
+                        || options.DataSource.StartsWith("lpc:", StringComparison.OrdinalIgnoreCase)) return currentReference;
+                    sourcePath = runtimeSourcePath;
+                    original = File.ReadAllBytes(sourcePath);
+                    if (!DpapiConnectionFile.IsBinary(original) || Fingerprint(original) != runtimeStored) return currentReference;
+                    configured = ConfiguredValue();
+                    if (configured != runtimeConfigValue) return currentReference;
+                    if (!encryptionAttempts.Add(sourcePath.ToUpperInvariant() + "\n" + Fingerprint(original))) return currentReference;
+                }
+
+                options.Encrypt = true;
+                options.TrustServerCertificate = false;
+                if (!options.DataSource.StartsWith("tcp:", StringComparison.OrdinalIgnoreCase)) options.DataSource = "tcp:" + options.DataSource;
+                // The timeout belongs to the probe only. Preserve the normal timeout in DPAPI.
+                var probeOptions = new SqlConnectionStringBuilder(options.ConnectionString) { ConnectTimeout = 3 };
+                SqlSession probeSession;
+                lock (SessionGate)
+                {
+                    if (runtimeKey != currentReference) return runtimeKey ?? currentReference;
+                    probeSession = current.Reconfigure(probeOptions.ConnectionString, current.UserName, null);
+                }
+                using (var probe = probeSession)
+                {
+                    // No SessionGate or file mutex is held during DNS, TLS or SQL I/O.
+                    if (!encryptionProbe(probe))
+                    {
+                        Trace.TraceInformation("SQL TLS auto-upgrade skipped: encrypted TCP was not confirmed.");
+                        lock (SessionGate) return runtimeKey ?? currentReference;
+                    }
+                }
+                lock (SessionGate)
+                {
+                    if (runtimeKey != currentReference) return runtimeKey ?? currentReference;
+                    candidateReference = SqlSessions.Register(current.Reconfigure(options.ConnectionString, current.UserName, null));
+                }
+                byte[] encoded = EncodeTlsUpgrade(original, SqlSessions.Resolve(candidateReference));
+                try
+                {
+                    string nextStored = Fingerprint(encoded);
+                    string nextRequest = Fingerprint(configured + "\n" + sourcePath + "\n" + nextStored);
+                    using (AcquireConfigurationWriteLock())
+                    lock (SessionGate)
+                    {
+                        if (runtimeKey != currentReference) return runtimeKey ?? currentReference;
+                        if (ConfiguredValue() != configured || runtimeSourcePath != sourcePath
+                            || Fingerprint(File.ReadAllBytes(sourcePath)) != Fingerprint(original)) return currentReference;
+                        bool written = false;
+                        bool reloading = false;
+                        try
+                        {
+                            DpapiConnectionFile.WriteAtomic(sourcePath, encoded, path =>
+                            {
+                                using (var verified = LegacyConnectionDecoder.DecodeFileBytes(File.ReadAllBytes(path)))
+                                {
+                                    var transport = new SqlConnectionStringBuilder(verified.ConnectionString);
+                                    if (!transport.Encrypt || transport.TrustServerCertificate) throw new InvalidOperationException("TLS configuration verification failed.");
+                                }
+                                // WriteAtomic keeps its last-good backup until this callback succeeds.
+                                if (reloadProvider != null && string.Equals(Path.GetFullPath(path), sourcePath, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    reloading = true;
+                                    reloadProvider(candidateReference);
+                                }
+                            });
+                            written = true;
+                            runtimeStored = nextStored;
+                            runtimeRequest = nextRequest;
+                            runtimeKey = candidateReference;
+                            committed = true;
+                        }
+                        catch
+                        {
+                            try
+                            {
+                                if (written || reloading)
+                                {
+                                    string actual = Fingerprint(File.ReadAllBytes(sourcePath));
+                                    if (actual != Fingerprint(original) && actual != Fingerprint(encoded))
+                                        throw new IOException("Configuration changed during recovery.");
+                                    if (actual != Fingerprint(original))
+                                        DpapiConnectionFile.WriteAtomic(sourcePath, original, path =>
+                                        {
+                                            if (Fingerprint(File.ReadAllBytes(path)) != Fingerprint(original)) throw new IOException("Configuration recovery failed.");
+                                        });
+                                }
+                                if (reloading) reloadProvider(currentReference);
+                            }
+                            catch { throw new EncryptionUpgradeRecoveryException(); }
+                            throw;
+                        }
+                    }
+                }
+                finally { Array.Clear(encoded, 0, encoded.Length); }
+                if (committed)
+                {
+                    try { SqlSessions.Retire(currentReference); } catch { Trace.TraceWarning("SQL TLS upgrade: old-session cleanup failed."); }
+                    Trace.TraceInformation("SQL TLS auto-upgrade completed.");
+                    return candidateReference;
+                }
+            }
+            catch (EncryptionUpgradeRecoveryException) { throw; }
+            catch (SqlException error) { Trace.TraceInformation("SQL TLS auto-upgrade skipped (SQL error {0}).", error.Number); }
+            catch (Exception error) { Trace.TraceInformation("SQL TLS auto-upgrade skipped ({0}).", error.GetType().Name); }
+            finally
+            {
+                if (original != null) Array.Clear(original, 0, original.Length);
+                if (!committed && candidateReference != null)
+                {
+                    try { SqlSessions.Retire(candidateReference); } catch { Trace.TraceWarning("SQL TLS upgrade: candidate cleanup failed."); }
+                }
+            }
+            return currentReference;
+        }
+
+        private static bool ProbeEncryptedConnection(SqlSession session)
+        {
+            using (var lease = session.Acquire())
+            using (var connection = lease.CreateConnection())
+            {
+                connection.Open();
+                using (var command = connection.CreateCommand())
+                {
+                    command.CommandTimeout = 3;
+                    command.CommandText = "SELECT encrypt_option, net_transport FROM sys.dm_exec_connections WHERE session_id = @@SPID";
+                    using (var reader = command.ExecuteReader())
+                        return reader.Read() && string.Equals(reader.GetString(0), "TRUE", StringComparison.OrdinalIgnoreCase)
+                            && string.Equals(reader.GetString(1), "TCP", StringComparison.OrdinalIgnoreCase);
+                }
+            }
+        }
+
+        private static byte[] EncodeTlsUpgrade(byte[] original, SqlSession candidate)
+        {
+            byte[] plain = candidate.ExportStorageBytes();
+            byte[] key = null, payload = null;
+            try
+            {
+                using (var content = DpapiConnectionFile.Read(original))
+                {
+                    if (content.Kind == DpapiContentKind.SqlConnection) return DpapiConnectionFile.Protect(content.Kind, plain);
+                    if (content.Kind != DpapiContentKind.LegacyCipher) throw new InvalidOperationException("Unsupported connection content.");
+                    string previousCipher = Encoding.UTF8.GetString(content.Data);
+                    string cipher;
+                    if (ConnectionCipher.IsNew(previousCipher))
+                    {
+                        key = ConnectionCipher.ReadDefaultKey();
+                        cipher = ConnectionCipher.Encrypt(plain, key);
+                    }
+                    else cipher = ConnectionCipher.EncryptLegacy(plain);
+                    payload = Encoding.UTF8.GetBytes(cipher);
+                    return DpapiConnectionFile.Protect(content.Kind, payload);
+                }
+            }
+            finally
+            {
+                Array.Clear(plain, 0, plain.Length);
+                if (key != null) Array.Clear(key, 0, key.Length);
+                if (payload != null) Array.Clear(payload, 0, payload.Length);
+            }
+        }
+
+        // All cooperating configuration writers use the same machine-wide mutex.
+        // Acquisition never waits, so callers already holding SessionGate cannot deadlock.
+        private static IDisposable AcquireConfigurationWriteLock()
+        {
+            string path = Path.GetFullPath(DpapiConnectionPath).ToUpperInvariant();
+            byte[] digest;
+            using (var sha = SHA256.Create()) digest = sha.ComputeHash(Encoding.UTF8.GetBytes(path));
+            var mutex = new Mutex(false, "Global\\HocPhi.SqlConfiguration." + BitConverter.ToString(digest).Replace("-", ""));
+            bool owned = false;
+            try
+            {
+                try { owned = mutex.WaitOne(0); } catch (AbandonedMutexException) { owned = true; }
+                if (!owned) throw new InvalidOperationException("Configuration is being saved by another process. Try again.");
+                return new ConfigurationWriteLease(mutex);
+            }
+            catch { if (owned) mutex.ReleaseMutex(); mutex.Dispose(); throw; }
+        }
+
+        private sealed class ConfigurationWriteLease : IDisposable
+        {
+            private Mutex mutex;
+            internal ConfigurationWriteLease(Mutex value) { mutex = value; }
+            public void Dispose()
+            {
+                var value = Interlocked.Exchange(ref mutex, null);
+                if (value != null) { try { value.ReleaseMutex(); } finally { value.Dispose(); } }
+            }
+        }
+        private sealed class EncryptionUpgradeRecoveryException : InvalidOperationException
+        {
+            internal EncryptionUpgradeRecoveryException() : base("Could not restore SQL configuration/provider after TLS upgrade. Stop and reload configuration.") { }
+        }
+    }
+}

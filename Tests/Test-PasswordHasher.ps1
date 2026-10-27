@@ -16,6 +16,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Password template engine test failed.' }
 $result = Get-Content -Raw -LiteralPath (Join-Path $folder 'result.txt')
 if (([regex]::Matches($result, 'PASSWORD_ASSET_PASS')).Count -ne 2 -or ([regex]::Matches($result, 'PROJECT_FRAMEWORK_PASS')).Count -ne 24) { throw 'Incomplete generation test matrix.' }
 if ($result -notmatch 'HOCPHI_INTEGRATION_PASS') { throw 'Missing HocPhi integration generation checks.' }
+if ($result -notmatch 'HOCPHI_TLS_UPGRADE_PASS') { throw 'Missing previous-provider upgrade checks.' }
 if (!(Test-Path -LiteralPath $MSBuild)) { throw 'MSBuild is required to verify generated integration project items.' }
 foreach ($scenario in @(
     @('Data', 'Accounts.Data', 'Security\PasswordStoragePolicy.user.cs'),
