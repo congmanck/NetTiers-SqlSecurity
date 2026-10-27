@@ -51,3 +51,21 @@ SqlConfiguration điều phối token, phiên và lưu/migrate DPAPI bên trong 
 Cipher cũ và HPCF2 được nhận trong cấu hình, token HPC1 và nội dung cipher của DPAPI. Không thay vỏ token/DPAPI và không tự đổi chuẩn đã lưu. HPCF2 cần đúng HocPhi.dpk (64 byte) cạnh ứng dụng kể cả sau khi token hết hạn. Sao lưu khóa; không tạo lại/ghi đè khóa đang sử dụng. Chưa hỗ trợ xoay nhiều khóa. Mất khóa cần khôi phục khóa hoặc cấp lại cấu hình. Phát hành bộ đọc HocPhi và updater trước khi cấp cipher mới; không hạ về bản đọc cũ. Updater không nhận HPC1 trực tiếp. Không ghi khóa, mật khẩu hoặc cấu hình rõ vào log/Git.
 
 Kiểm thử HPCF2: `Tests/Test-ApiHardening.ps1` kiểm tra đăng ký ConnectionCipher trong generator/project, đồng bộ 4 asset với nguồn HocPhi, rồi materialize và compile với Accounts.Data và PortingTrial.Data. Cả hai đạt 60 check API/session gồm test vector cố định và nhập/lưu hai chuẩn qua token/DPAPI. Đây chưa phải chạy CodeSmith sinh toàn bộ từ schema.
+
+## PasswordHasher tùy chọn — 27/10/2026
+
+Trong profile dùng bộ template này, bật:
+
+```xml
+<property name="IncludePasswordHasher">True</property>
+```
+
+Mặc định là `False`; hỗ trợ luồng SQL Server và .NET Framework 4.8 hiện tại. Khi bật, generator lấy `SecuritySource/PasswordHasher.cs.txt`, thay namespace DAL rồi sinh `Data/Security/PasswordHasher.cs` và thêm Compile Include vào project Data. Sinh lại sẽ cập nhật file hasher do generator quản lý; tắt tùy chọn không xóa file đã có nhưng project sinh mới không include hasher. Không tắt khi ứng dụng vẫn tham chiếu lớp này.
+
+Hasher dùng PBKDF2-HMAC-SHA256 với 600.000 vòng, salt ngẫu nhiên 16 byte, output 32 byte, định dạng `pbkdf2-sha256$v1$...`. Windows CNG được dùng để thực hiện thuật toán chuẩn. Có kiểm tra định dạng, giới hạn vòng lặp và xác thực hai dạng MD5 legacy của HocPhi/UIS; không tự biết khách hàng nào dùng UIS và không tự đổi dữ liệu.
+
+Không đưa `PasswordStoragePolicy`, tên bảng/procedure HocPhi hoặc phương thức riêng của `SqlTaiKhoanProvider` vào template chung. Các phần này ở file `*.user.cs` của ứng dụng; project template đã include wildcard `**\*.user.*`, vì vậy giữ file và đăng ký compile sau khi regenerate. Trong HocPhi hiện tại đã tách thành `Security/PasswordStoragePolicy.user.cs` và `SqlTaiKhoanProvider.PasswordSecurity.user.cs`. Trường mật khẩu 255 ký tự vẫn lấy từ schema/procedure; tính năng này không tự ALTER database.
+
+Profile HocPhi phải trỏ tới `NetTiers.cst` của bộ template này và bật `IncludePasswordHasher=True` khi generate; chưa sửa profile sản xuất. Luôn kiểm tra `ExecuteSql=False` và dùng output thử để xem diff trước khi đưa vào source thật.
+
+Kiểm thử: `Tests/Test-PasswordHasher.ps1` compile master bằng CodeSmith 7.1 thật, thử bật/tắt và sinh lại asset với hai namespace, render/re-render 24 tổ hợp project (4 vai trò × 3 framework đầu vào × 2 trạng thái), rồi compile/chạy 29 kiểm tra hash cho mỗi namespace trên AnyCPU và x86. Kiểm tra vector độc lập và tương thích Rfc2898DeriveBytes; không truy cập schema, chạy SQL hoặc regenerate project sản xuất. Chạy `Tests/Test-ApiHardening.ps1` để kiểm tra hồi quy các asset kết nối.

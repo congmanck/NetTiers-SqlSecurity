@@ -26,6 +26,7 @@
 <%@ Property Name="IncludeUnitTest" Type="MoM.Templates.UnitTestStyle" Default="None" Category="02. Framework Generation - Optional" Description="Indicates type of Unit tests to be generated." %>
 <%@ Property Name="IncludeComponentLayer" Type="MoM.Templates.ComponentPatternType" Category="02. Framework Generation - Optional" Description="The pattern type to implement in the Component Layer." Default="None" %>
 <%@ Property Name="IncludeWCFDataAttributes" Type="System.Boolean" Default="False" Category="02. Framework Generation - Optional" Description="Indicates if the WCF attributes, [DataContract] and [DataMember], should be included on the entity classes." %>
+<%@ Property Name="IncludePasswordHasher" Type="System.Boolean" Default="False" Category="02. Framework Generation - Optional" Description="Generate the Windows PBKDF2-SHA256 password helper for the SQL DAL. Does not generate application policy, migration SQL or provider methods." %>
 <%@ Property Name="SerializeEntityState" Type="System.Boolean" Default="False" Category="02. Framework Generation - Optional" Description="Indicates if the EntityState property should be included during serialization.  Useful if needing to know what state the entity is in over webservices." %>
 <%@ Property Name="EntLibVersion" Type="MoM.Templates.EntLibVersion" Default="v3_1" Category="02. Framework Generation - Optional" Description="Indicates the Enterprise Library version to use. Options include v3.1, v5.0" %>
 <%@ Property Name="VisualStudioVersion" Type="MoM.Templates.VSNetVersion" Default="v2013" Category="02. Framework Generation - Optional" Description="Indicates the Version of Visual Studio to target. Options include v2005, v2008 and v2010" %>
@@ -800,6 +801,9 @@
 		
 		#endregion
 		
+		if (IncludePasswordHasher && !_netTiersSqlProvider)
+            throw new InvalidOperationException("IncludePasswordHasher currently requires the SQL Server provider.");
+
 		if (_netTiersSqlProvider && EntLibVersion != MoM.Templates.EntLibVersion.v3_1)
 			throw new InvalidOperationException("Secure SQL templates require Enterprise Library v3_1. No output should be deployed with another version.");
 
@@ -2008,6 +2012,8 @@
                     File.WriteAllText(Path.Combine(securityDirectory, securityFile), securityCode, Encoding.UTF8);
                     AddFileNode(commonNode, "Security\\" + securityFile);
                 }
+                if (GeneratePasswordHasher(rootPathDAL, DALNameSpace))
+                    AddFileNode(commonNode, "Security\\PasswordHasher.cs");
             }
 
             
@@ -2986,6 +2992,7 @@
 		this.GetTemplate(projectTemplate).SetProperty("ValidationType", ValidationType);
 		this.GetTemplate(projectTemplate).SetProperty("IsConnectionStringAzure", IsConnectionStringAzure);
 		this.GetTemplate(projectTemplate).SetProperty("ProviderInvariantName", ProviderInvariantName);
+        this.GetTemplate(projectTemplate).SetProperty("IncludePasswordHasher", IncludePasswordHasher);
 
 		//This is the path to the References Folder
 		string rootPath = Path.GetFullPath(Path.Combine(OutputDirectory, LibraryPath));
@@ -3076,6 +3083,7 @@
 	
 			this.GetTemplate(projectTemplate).SetProperty("IncludeBll", false);
 			this.GetTemplate(projectTemplate).SetProperty("ProviderInvariantName", ProviderInvariantName);
+        this.GetTemplate(projectTemplate).SetProperty("IncludePasswordHasher", IncludePasswordHasher);
 			this.GetTemplate(projectTemplate).SetProperty("IncludeDALBase", true);	
 			this.GetTemplate(projectTemplate).SetProperty("IncludeSqlClient", false);			
 			this.GetTemplate(projectTemplate).SetProperty("IncludeGenericClient", false);	
@@ -4874,6 +4882,18 @@
 		return node;
 	}
 	
+    // Application-specific policy/provider extensions belong in *.user.cs, not this asset.
+    protected bool GeneratePasswordHasher(string rootPathDal, string dalNamespace)
+    {
+        if (!IncludePasswordHasher) return false;
+        string directory = Path.Combine(rootPathDal, "Security");
+        Directory.CreateDirectory(directory);
+        string source = Path.Combine(CodeTemplateInfo.DirectoryName, "SecuritySource\\PasswordHasher.cs.txt");
+        string code = File.ReadAllText(source).Replace("__DAL_NAMESPACE__", dalNamespace);
+        File.WriteAllText(Path.Combine(directory, "PasswordHasher.cs"), code, Encoding.UTF8);
+        return true;
+    }
+
 	private XmlElement AddFileNode(XmlElement rootNode, string filename)
 	{
 		XmlElement node = docOutput.CreateElement("File");

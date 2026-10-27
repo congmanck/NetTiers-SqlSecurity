@@ -52,6 +52,7 @@
 <%@ Property Name="IncludeComponents" Type="System.Boolean"  Category="Option" Description="Determines whether or not a component library is being used." %>
 <%@ Property Name="IncludeWebserviceClient" Type="System.Boolean" Category="Option" Description="" %>
 <%@ Property Name="IncludeUnitTest" Type="MoM.Templates.UnitTestStyle" Default="NUnit" Category="General" Description="Indicates type of Unit tests to be generated." %>
+<%@ Property Name="IncludePasswordHasher" Type="System.Boolean" Default="False" Category="Option" Description="Include the optional SQL DAL PBKDF2 password helper." %>
 <%@ Property Name="IncludeWCFDataAttributes" Type="System.Boolean" Default="False" Category="02. Framework Generation - Optional" Description="Indicates if the WCF attributes, [DataContract] and [DataMember], should be included on the entity classes." %>
 <%@ Property Name="IncludeDesignTimeSupport" Type="System.Boolean" Default="true" Category="05. WebLibrary - Advanced" Description="Indicates if Visual Studio design-time support should be provided for the Web Library controls." %>
 <%@ Property Name="ValidationType" Type="MoM.Templates.ValidationType" Default="NetTiers" Category="02. Framework Generation - Optional" Description="Choice to either use .netTiers validation framework, or Enterprise Library VAB" %>
@@ -1090,6 +1091,9 @@
 			  <SubType>Code</SubType>
 			</Compile>
 <% if (ProviderInvariantName == "System.Data.SqlClient") { %>
+<% if (IncludePasswordHasher) { %>
+            <Compile Include="<%=DALSubFolder%>Security\PasswordHasher.cs" />
+<% } %>
             <Compile Include="<%=DALSubFolder%>Security\AuditRedaction.cs" />
             <Compile Include="<%=DALSubFolder%>Security\ConnectionCipher.cs" />
             <Compile Include="<%=DALSubFolder%>Security\ConnectionToken.cs" />
