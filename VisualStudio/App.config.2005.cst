@@ -1,4 +1,4 @@
-﻿<%@ CodeTemplate Language="C#" TargetLanguage="XML" Src="..\TemplateLib\CommonSqlCode.cs" Inherits="MoM.Templates.CommonSqlCode" Description="Configuration file." Debug="true" ResponseEncoding="UTF-8" NoWarn="0108,0618,1572,1573,1574,0162,2002" %>
+<%@ CodeTemplate Language="C#" TargetLanguage="XML" Src="..\TemplateLib\CommonSqlCode.cs" Inherits="MoM.Templates.CommonSqlCode" Description="Configuration file." Debug="true" ResponseEncoding="UTF-8" NoWarn="0108,0618,1572,1573,1574,0162,2002" %>
 <%@ Property Name="IsWebConfig" Type="System.Boolean" Default="False" Category="General" Description="Indicates whether the current configuration file is a web.config file." %>
 <%@ Property Name="DALNameSpace" Type="System.String" Category="Data" Description="DAL Namespace." %>
 <%@ Property Name="ConnectionString" Type="System.String" Category="Data" Description="sql connectionstring." %>
@@ -7,6 +7,7 @@
 <%@ Property Name="NetTiersSqlProvider" Type="System.Boolean" Category="Data" Description="Indicates if we use the SqlClient Provider." %>
 <%@ Property Name="ProviderInvariantName" Type="System.String" Category="Data" Description="The DBProviderFactory name." %>
 <%@ Property Name="EntLibVersion" Type="MoM.Templates.EntLibVersion" Default="v5_0" Category="02. Framework Generation - Optional" Description="Indicates the Enterprise Library version to use. Options include v3.1 and v5" %>
+<%@ Property Name="DotNetVersion" Type="MoM.Templates.DotNetFrameworkVersion" Default="v4_8" Optional="True" %>
 <%@ Assembly Name="SchemaExplorer" %>
 <%@ Assembly Name="System.Design" %>
 <%@ Import Namespace="SchemaExplorer" %>
@@ -15,6 +16,9 @@ string entlibVersionText = GetEntLibVersionSignature(EntLibVersion);
 %>
 <?xml version="1.0" encoding="utf-8" ?>
 <configuration>
+  <% if (!IsWebConfig) { %>
+  <startup><supportedRuntime version="v4.0" sku=".NETFramework,Version=v<%= GetDotNetFrameworkString(DotNetVersion) %>" /></startup>
+  <% } %>
   <configSections>
        <section name="netTiersService"
         type="<%=DALNameSpace%>.Bases.NetTiersServiceSection, <%=DALNameSpace%>"
@@ -128,7 +132,7 @@ string entlibVersionText = GetEntLibVersionSignature(EntLibVersion);
     </enterpriseLibrary.ConfigurationSource>
    <% if (IsWebConfig) { %>
 	<system.web>
-		<compilation defaultLanguage="c#" debug="true"/>
+		<compilation defaultLanguage="c#" debug="true" targetFramework="<%= GetDotNetFrameworkString(DotNetVersion) %>"/>
 	</system.web>
 	<% } %>
 </configuration>

@@ -29,7 +29,7 @@
 <%@ Property Name="SerializeEntityState" Type="System.Boolean" Default="False" Category="02. Framework Generation - Optional" Description="Indicates if the EntityState property should be included during serialization.  Useful if needing to know what state the entity is in over webservices." %>
 <%@ Property Name="EntLibVersion" Type="MoM.Templates.EntLibVersion" Default="v3_1" Category="02. Framework Generation - Optional" Description="Indicates the Enterprise Library version to use. Options include v3.1, v5.0" %>
 <%@ Property Name="VisualStudioVersion" Type="MoM.Templates.VSNetVersion" Default="v2013" Category="02. Framework Generation - Optional" Description="Indicates the Version of Visual Studio to target. Options include v2005, v2008 and v2010" %>
-<%@ Property Name="DotNetVersion" Type="MoM.Templates.DotNetFrameworkVersion" Default="v4_5" Category="02. Framework Generation - Optional" Description="SQL security output requires .NET Framework 4.5.2 or later; choose v4_5. Older SQL profiles are promoted to v4_5" %>
+<%@ Property Name="DotNetVersion" Type="MoM.Templates.DotNetFrameworkVersion" Default="v4_8" Category="02. Framework Generation - Optional" Description="SQL security output requires .NET Framework 4.8 or later; choose v4_8. Older SQL profiles are promoted to v4_8" %>
 <%@ Property Name="IncludeXmlAttributes" Type="System.Boolean" Default="False" Category="02. Framework Generation - Optional" Description="Indicates if the Xml attributes, [XmlElement(IsNullable=true)], should be included on the entity classes." %>
 <%@ Property Name="CustomCodeFolderName" Type="System.String" Category="02. Framework Generation - Optional" Description="If specified, indicates the name of a folder that can contains custom classes to dynamically add to each project." Default="App_Code" %>
 <%@ Property Name="EqualitySemantics" Type="MoM.Templates.EqualitySemantics" Default="Value" Category="02. Framework Generation - Optional" Description="Equality semantics used for Entity instances.  If 'Reference', default reference type semantics will be used (based on object identity).  If 'Value', Equals() and GetHashCode() will be overridden to use value semantics (based on object contents)." %>
@@ -804,8 +804,8 @@
 			throw new InvalidOperationException("Secure SQL templates require Enterprise Library v3_1. No output should be deployed with another version.");
 
 		// Keep template feature branches consistent with secure SQL project output.
-		if (_netTiersSqlProvider && new System.Version(GetDotNetFrameworkString(DotNetVersion)) < new System.Version("4.5"))
-			DotNetVersion = MoM.Templates.DotNetFrameworkVersion.v4_5;
+		if (_netTiersSqlProvider && new System.Version(GetDotNetFrameworkString(DotNetVersion)) < new System.Version("4.8"))
+			DotNetVersion = MoM.Templates.DotNetFrameworkVersion.v4_8;
 
 		#region Build Namespaces
 		if (BusinessLogicLayerNameSpace == null) BusinessLogicLayerNameSpace = string.Empty;
@@ -1937,6 +1937,7 @@
 		{
 			// Generates the configuration files
 			string configFile = "App.config.2005.cst";
+            this.GetTemplate(configFile).SetProperty("DotNetVersion", DotNetVersion);
 			
 			// Configuration files for the unit test project
 			if (IncludeUnitTest != MoM.Templates.UnitTestStyle.None)

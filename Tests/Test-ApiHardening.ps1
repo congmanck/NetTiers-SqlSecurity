@@ -5,7 +5,7 @@ New-Item -ItemType Directory -Path $output | Out-Null
 $sdkRoot = Join-Path $env:ProgramFiles 'dotnet\sdk'
 $compiler = Get-ChildItem $sdkRoot -Directory | Sort-Object Name -Descending | ForEach-Object { Join-Path $_.FullName 'Roslyn\bincore\csc.dll' } | Where-Object { Test-Path $_ } | Select-Object -First 1
 if (!$compiler) { throw 'Install .NET SDK for Roslyn.' }
-$framework = Join-Path $env:WINDIR 'Microsoft.NET\Framework\v4.0.30319'
+$framework = & (Join-Path $PSScriptRoot 'framework\Get-Net48ReferencePath.ps1')
 $references = @('mscorlib','System','System.Core','System.Data','System.Security','System.Configuration','System.Xml') | ForEach-Object { '/reference:' + (Join-Path $framework ($_ + '.dll')) }
 $master = [IO.File]::ReadAllText((Join-Path $base 'NetTiers.cst'))
 if ($master -notmatch '"ConnectionCipher.cs"') { throw 'Cipher generator registration missing.' }
@@ -38,14 +38,18 @@ foreach ($namespace in @('Accounts.Data','PortingTrial.Data')) {
         $path
     }
     $library = Join-Path $folder 'SecurityCore.dll'
+    $marker = Join-Path $folder 'Framework48.cs'
+    '[assembly: System.Runtime.Versioning.TargetFramework(".NETFramework,Version=v4.8")]' | Set-Content -LiteralPath $marker -Encoding UTF8
+    $sources = @($sources) + $marker
     & dotnet $compiler /nologo /nostdlib+ /target:library "/out:$library" @references @sources
     if ($LASTEXITCODE -ne 0) { throw "Template source compilation failed: $namespace" }
     $test = Join-Path $folder 'Tests.cs'
     $code = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'ApiSurfaceTests.cs.txt')).Replace('__DAL_NAMESPACE__', $namespace)
     [IO.File]::WriteAllText($test, $code, [Text.UTF8Encoding]::new($false))
     $exe = Join-Path $folder 'Tests.exe'
-    & dotnet $compiler /nologo /nostdlib+ /target:exe "/out:$exe" @references "/reference:$library" $test
+    & dotnet $compiler /nologo /nostdlib+ /target:exe "/out:$exe" @references "/reference:$library" $test $marker
     if ($LASTEXITCODE -ne 0) { throw "Template probe compilation failed: $namespace" }
+    '<configuration><startup><supportedRuntime version="v4.0" sku=".NETFramework,Version=v4.8" /></startup></configuration>' | Set-Content -LiteralPath ($exe + '.config') -Encoding UTF8
     & $exe
     if ($LASTEXITCODE -ne 0) { throw "Template tests failed: $namespace" }
     Write-Output "TEMPLATE_API_PASS: $namespace"

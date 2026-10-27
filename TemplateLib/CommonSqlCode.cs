@@ -6231,6 +6231,11 @@ CREATE\s+PROC(?:EDURE)?                               # find the start of the st
 
             return versionNumber;
         }
+        public bool IsDotNetFramework4OrLater(DotNetFrameworkVersion version)
+        {
+            return version == DotNetFrameworkVersion.v4 || version == DotNetFrameworkVersion.v4_5 || version == DotNetFrameworkVersion.v4_8;
+        }
+
         public string GetDotNetFrameworkString( DotNetFrameworkVersion version )
         {
             string versionNumber = "2.0";
@@ -6244,6 +6249,9 @@ CREATE\s+PROC(?:EDURE)?                               # find the start of the st
                     break;
                 case ( DotNetFrameworkVersion.v4 ) :
                     versionNumber = "4.0";
+                    break;
+                case ( DotNetFrameworkVersion.v4_8 ) :
+                    versionNumber = "4.8";
                     break;
                 case ( DotNetFrameworkVersion.v4_5 ) :
                     versionNumber = "4.5";
@@ -6547,7 +6555,9 @@ CREATE\s+PROC(?:EDURE)?                               # find the start of the st
         /// <summary> version 4.0 </summary>
         v4,
         /// <summary> version 4.5 </summary>
-        v4_5
+        v4_5,
+        /// <summary> version 4.8 </summary>
+        v4_8
     }
     #endregion
 

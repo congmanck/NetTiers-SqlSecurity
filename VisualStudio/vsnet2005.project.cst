@@ -71,7 +71,7 @@
 <%@ Property Name="rootPathWS" Type="System.String" Category="WebService" Description="The folder where the webservice code is generated." Default="" %>
 <%@ Property Name="EntLibVersion" Type="MoM.Templates.EntLibVersion" Default="v3_1" Category="02. Framework Generation - Optional" Description="Indicates the Enterprise Library version to use. Options include v2, v3, v3.1 and v4" %>
 <%@ Property Name="VisualStudioVersion" Type="MoM.Templates.VSNetVersion" Default="v2013" Category="02. Framework Generation - Optional" Description="Indicates the Version of Visual Studio to target. Options include v2005, v2008 and v2010" %>
-<%@ Property Name="DotNetVersion" Type="MoM.Templates.DotNetFrameworkVersion" Default="v4_5" Category="02. Framework Generation - Optional" Description="SQL security output requires .NET Framework 4.5.2 or later; choose v4_5. Older SQL profiles are promoted to v4_5" %>
+<%@ Property Name="DotNetVersion" Type="MoM.Templates.DotNetFrameworkVersion" Default="v4_8" Category="02. Framework Generation - Optional" Description="SQL security output requires .NET Framework 4.8 or later; choose v4_8. Older SQL profiles are promoted to v4_8" %>
 <%@ Property Name="IsConnectionStringAzure" Type="System.Boolean" Default="False" Category="02. Framework Generation - Optional" Description="Indicates if at runtime the netTiersConnectionString is read from Window Azure's ServiceConfiguration.cscfg or from Web.config/app.config." %>
 
 <%@ Assembly Name="SchemaExplorer" %>
@@ -179,7 +179,7 @@
     <ProjectType><%if (IncludeWebservice) Response.Write("Web"); else Response.Write("Local"); %></ProjectType>
 	<% } %>
 <% if (ProviderInvariantName == "System.Data.SqlClient" && (IncludeDALBase || IncludeSqlClient || IncludeBll || IncludeComponents)) { %>
-    <TargetFrameworkVersion>v<%= (new System.Version(GetDotNetFrameworkString(DotNetVersion)) < new System.Version("4.5.2") ? "4.5.2" : GetDotNetFrameworkString(DotNetVersion)) %></TargetFrameworkVersion>
+    <TargetFrameworkVersion>v<%= (new System.Version(GetDotNetFrameworkString(DotNetVersion)) < new System.Version("4.8") ? "4.8" : GetDotNetFrameworkString(DotNetVersion)) %></TargetFrameworkVersion>
 <% } else { %>
 	<% if (VisualStudioVersion == MoM.Templates.VSNetVersion.v2008 || VisualStudioVersion == MoM.Templates.VSNetVersion.v2010 || VisualStudioVersion == MoM.Templates.VSNetVersion.v2012 || VisualStudioVersion == MoM.Templates.VSNetVersion.v2013) { %><TargetFrameworkVersion>v<%= GetDotNetFrameworkString( DotNetVersion ) %></TargetFrameworkVersion><%}%>
 <% } %>
@@ -282,7 +282,7 @@
 		<RequiredTargetFramework><%= GetDotNetFrameworkString( DotNetVersion ) %></RequiredTargetFramework>
 	</Reference>
     <%}%>
-<% if (GetDotNetFrameworkString( DotNetVersion ) == "4.5" || GetDotNetFrameworkString( DotNetVersion ) == "4.0" || (ValidationType == MoM.Templates.ValidationType.EntLib && GetDotNetFrameworkString( DotNetVersion ) == "3.5")) {%>
+<% if (IsDotNetFramework4OrLater(DotNetVersion) || (ValidationType == MoM.Templates.ValidationType.EntLib && GetDotNetFrameworkString( DotNetVersion ) == "3.5")) {%>
     <Reference Include="System.ComponentModel.DataAnnotations"/>
 <%}%>
     <Reference Include="System.Web"/>

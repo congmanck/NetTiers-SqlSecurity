@@ -1,0 +1,86 @@
+﻿<%@ CodeTemplate Src="../TemplateLib/CommonSqlCode.cs" Inherits="MoM.Templates.CommonSqlCode" Language="C#" TargetLanguage="Text" CompilerVersion="v3.5" %>
+<%@ Assembly Name="SchemaExplorer" %>
+<%@ Assembly Name="SchemaExplorer.SqlSchemaProvider" %>
+<%@ Assembly Name="System.Design" %>
+<%@ Register Name="ConfigProbe" Template="../VisualStudio/App.config.2005.cst" MergeProperties="False" %>
+<%@ Register Name="ProjectProbe" Template="../VisualStudio/vsnet2005.project.cst" MergeProperties="False" %>
+<%@ Import Namespace="System" %>
+<%@ Import Namespace="System.IO" %>
+<%@ Import Namespace="System.Xml" %>
+<%@ Import Namespace="SchemaExplorer" %>
+<%@ Import Namespace="MoM.Templates" %>
+<%@ Property Name="TrialOutput" Type="System.String" Optional="False" %>
+<%
+if (!Directory.Exists(TrialOutput)) throw new InvalidOperationException("Trial output must already exist.");
+CodeSmith.Engine.CodeTemplateCompiler compiler = new CodeSmith.Engine.CodeTemplateCompiler(Path.Combine(Path.GetDirectoryName(CodeTemplateInfo.FullPath), "..\\NetTiers.cst"));
+compiler.Compile();
+if (compiler.Errors.HasErrors) {
+    System.Text.StringBuilder errors = new System.Text.StringBuilder();
+    foreach (System.CodeDom.Compiler.CompilerError error in compiler.Errors) if (!error.IsWarning) errors.AppendLine(error.ErrorText);
+    throw new Exception(errors.ToString());
+}
+CodeSmith.Engine.CodeTemplate master = compiler.CreateInstance();
+if (master.GetType().GetProperty("DotNetVersion").GetValue(master, null).ToString() != "v4_8") throw new Exception("Wrong master default.");
+if ((bool)master.GetType().GetProperty("ExecuteSql").GetValue(master, null)) throw new Exception("Unsafe test default.");
+master.Dispose();
+Response.WriteLine("MASTER_TEMPLATE_COMPILE_PASS; default v4_8, ExecuteSql=False; master not rendered");
+CodeSmith.Engine.CodeTemplate config = base.CreateTemplate<ConfigProbe>();
+config.SetProperty("DotNetVersion", DotNetFrameworkVersion.v4_8);
+config.SetProperty("IsWebConfig", false);
+config.SetProperty("DALNameSpace", "FrameworkTrial.Data");
+config.SetProperty("ConnectionString", "Data Source=(local);Initial Catalog=FrameworkTrial;Integrated Security=True");
+config.SetProperty("FactoryType", "FrameworkTrial.Entities.EntityFactory");
+config.SetProperty("WebServiceUrl", "https://example.invalid/service");
+config.SetProperty("ProviderInvariantName", "System.Data.SqlClient");
+config.SetProperty("NetTiersSqlProvider", true);
+config.SetProperty("EntLibVersion", EntLibVersion.v3_1);
+string configText = config.RenderToString();
+XmlDocument configXml = new XmlDocument(); configXml.LoadXml(configText);
+if (configXml.SelectSingleNode("/configuration/startup/supportedRuntime/@sku").Value != ".NETFramework,Version=v4.8") throw new Exception("Wrong runtime configuration.");
+if (configText != config.RenderToString()) throw new Exception("Config generation changed on repeat.");
+File.WriteAllText(Path.Combine(TrialOutput, "FrameworkTrial.config"), configText);
+config.Dispose();
+Response.WriteLine("CONFIG_FRAMEWORK_PASS v4.8; repeat generation identical");
+if (GetDotNetFrameworkString(DotNetFrameworkVersion.v4_8) != "4.8") throw new Exception("Framework mapping failed.");
+if ((int)DotNetFrameworkVersion.v4_5 != 4 || (int)DotNetFrameworkVersion.v4_8 != 5) throw new Exception("Enum compatibility failed.");
+foreach (string role in new string[] { "Entities", "Data", "SqlClient", "Services" })
+foreach (DotNetFrameworkVersion version in new DotNetFrameworkVersion[] { DotNetFrameworkVersion.v4, DotNetFrameworkVersion.v4_5, DotNetFrameworkVersion.v4_8 })
+{
+    if (!IsDotNetFramework4OrLater(version)) throw new Exception("Feature selection failed.");
+    CodeSmith.Engine.CodeTemplate project = base.CreateTemplate<ProjectProbe>();
+    string templateSource = File.ReadAllText(Path.Combine(Path.GetDirectoryName(CodeTemplateInfo.FullPath), "..\\VisualStudio\\vsnet2005.project.cst"));
+    foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(templateSource, "<%@ Property Name=\"([^\"]+)\" Type=\"System.String\""))
+    {
+        string propertyName = match.Groups[1].Value;
+        project.SetProperty(propertyName, propertyName.EndsWith("Guid") ? "813078E1-823F-4B42-B509-B53B06BB2F91" : "FrameworkTrial");
+    }
+    project.SetProperty("DotNetVersion", version);
+    project.SetProperty("VisualStudioVersion", VSNetVersion.v2013);
+    project.SetProperty("ProviderInvariantName", "System.Data.SqlClient");
+    project.SetProperty("EntLibVersion", EntLibVersion.v3_1);
+    project.SetProperty("SourceDatabase", new DatabaseSchema(new SqlSchemaProvider(), ""));
+    project.SetProperty("SourceTables", new TableSchemaCollection());
+    project.SetProperty("SourceViews", new ViewSchemaCollection());
+    project.SetProperty("EnumTables", new TableSchemaCollection());
+    project.SetProperty("IncludeBll", role == "Entities");
+    project.SetProperty("IncludeDALBase", role == "Data");
+    project.SetProperty("IncludeSqlClient", role == "SqlClient");
+    project.SetProperty("IncludeComponents", role == "Services");
+    project.SetProperty("ComponentPattern", ComponentPatternType.ServiceLayer);
+    project.SetProperty("BLLNameSpace", "FrameworkTrial.Entities");
+    project.SetProperty("BLLGuid", "813078E1-823F-4B42-B509-B53B06BB2F91");
+    project.SetProperty("NameSpace", "FrameworkTrial");
+    project.SetProperty("OutputDirectory", TrialOutput);
+    project.SetProperty("LibraryPath", "..\\References");
+    string first = project.RenderToString();
+    string second = project.RenderToString();
+    project.Dispose();
+    if (first != second) throw new Exception("Second generation changed output.");
+    XmlDocument xml = new XmlDocument(); xml.LoadXml(first);
+    XmlNode target = xml.SelectSingleNode("//*[local-name()='TargetFrameworkVersion']");
+    if (target == null || target.InnerText != "v4.8") throw new Exception("Wrong generated target.");
+    if (!first.Contains("System.ComponentModel.DataAnnotations")) throw new Exception("Missing modern framework reference.");
+    File.WriteAllText(Path.Combine(TrialOutput, role + "-" + version.ToString() + ".csproj"), first);
+    Response.WriteLine("PROJECT_FRAMEWORK_PASS " + role + " " + version.ToString() + " -> v4.8; repeat generation identical");
+}
+%>

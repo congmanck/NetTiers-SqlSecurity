@@ -1,4 +1,4 @@
-# NetTiers SQL memory protection
+﻿# NetTiers SQL memory protection
 
 ## Chọn template trong CodeSmith
 
@@ -6,7 +6,7 @@ Bộ đang chỉnh: `D:\CursorAICty\NetTiers-SqlSecurity`. Trong CodeSmith mở 
 
 Chọn SQL Server, EnterpriseLibrary `v3_1`, VisualStudioVersion `v2013` và output thử riêng, ví dụ `D:\CursorAI\HocPhiChung2025\.security-work\nettiers-codesmith-trial`. `ExecuteSql=False`; không chạy script SQL hoặc generate trực tiếp vào source đang dùng. Không đặt password thực trong profile bàn giao.
 
-Bộ SQL bảo mật hiện chỉ hỗ trợ EnterpriseLibrary 3.1 đã kiểm thử. NetTiers.cst từ chối SQL provider với phiên bản khác trước luồng sinh file. CompilerVersion=v3.5 của generator không bị thay; code output cần Roslyn/C# 6 trở lên và SDK .NET Framework 4.5.2 hoặc cao hơn. Target framework của Data/SqlClient/entities output được nâng tối thiểu 4.5.2, giữ phiên bản cao hơn nếu đã chọn. Cần build bằng MSBuild/SDK mới phù hợp, không dùng compiler C# 3.5 để compile output.
+Bộ SQL bảo mật hiện chỉ hỗ trợ EnterpriseLibrary 3.1 đã kiểm thử. NetTiers.cst từ chối SQL provider với phiên bản khác trước luồng sinh file. CompilerVersion=v3.5 của generator không bị thay; code output cần Roslyn/C# 6 trở lên và SDK .NET Framework 4.8 hoặc cao hơn. Target framework của Data/SqlClient/entities output được nâng tối thiểu 4.8, giữ phiên bản cao hơn nếu đã chọn. Cần build bằng MSBuild/SDK mới phù hợp, không dùng compiler C# 3.5 để compile output.
 
 ## Những phần đã tích hợp
 
@@ -40,9 +40,9 @@ Chưa tìm thấy CodeSmith engine trên máy hiện tại. **Chưa chạy gener
 
 ## Mặc định framework đã chỉnh
 
-Template mới mặc định DotNetVersion=v4_5, EntLibVersion=v3_1 và ExecuteSql=False. Profile cũ chọn v4 được nâng lên v4_5 trong luồng SQL; csproj đầu ra tối thiểu v4.5.2. Profile lưu sẵn có thể ghi đè giá trị mặc định, nên vẫn kiểm tra EntLibVersion và ExecuteSql sau khi mở. Không tự tắt ExecuteSql nếu người dùng bật rõ trong profile. Lỗi trùng custom method GetByBillId/GetByBillIdHoanPhi chưa được sửa bởi thay đổi framework này.
+Template mới mặc định DotNetVersion=v4_8, EntLibVersion=v3_1 và ExecuteSql=False. Profile cũ chọn v4 được nâng lên v4_8 trong luồng SQL; csproj đầu ra tối thiểu v4.8. Profile lưu sẵn có thể ghi đè giá trị mặc định, nên vẫn kiểm tra EntLibVersion và ExecuteSql sau khi mở. Không tự tắt ExecuteSql nếu người dùng bật rõ trong profile. Lỗi trùng custom method GetByBillId/GetByBillIdHoanPhi chưa được sửa bởi thay đổi framework này.
 
-Da sua nhanh IncludeComponents (Accounts.Services): project Services sinh ra cung toi thieu v4.5.2 de tham chieu Data/Entities v4.5.2.
+Da sua nhanh IncludeComponents (Accounts.Services): project Services sinh ra cung toi thieu v4.8 de tham chieu Data/Entities v4.8.
 
 ## API hardening 2026-10-17
 SqlConfiguration điều phối token, phiên và lưu/migrate DPAPI bên trong DAL. AppConnection và frmConfig cần bản port mới cùng DLL. Không dùng InternalsVisibleTo. Dữ liệu text/binary cũ giữ tương thích, EXE/plugin dùng API đã bỏ phải rebuild. Tests/Test-ApiHardening.ps1 kiểm tra hai namespace; chưa chạy CodeSmith với database thử nghiệm. Xem báo cáo API-HARDENING-20261017.md trong HocPhiChung2026.

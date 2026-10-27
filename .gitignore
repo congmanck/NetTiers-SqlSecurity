@@ -1,1 +1,6 @@
 *.md
+
+/.framework-reference/
+/Tests/.work/
+!NET48-MIGRATION.md
+!HUONG-DAN-SECURITY.md
