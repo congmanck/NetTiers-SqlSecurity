@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Configuration;
 using System.Data.SqlClient;
 using System.IO;
@@ -125,8 +125,8 @@ internal static class ApiSurfaceProbe
         {
             System.Threading.Interlocked.Increment(ref probes);
             var options = new SqlConnectionStringBuilder(session.ConnectionString);
-            Check(options.Encrypt && !options.TrustServerCertificate && options.ConnectTimeout == 3 && options.DataSource.StartsWith("tcp:"));
-            return true; // Simulates a certificate-validated TCP/DMV success; no SQL opened in unit tests.
+            Check(options.Encrypt && options.TrustServerCertificate && options.ConnectTimeout == 3 && options.DataSource.StartsWith("tcp:"));
+            return true; // Simulates a encrypted TCP/DMV success with certificate validation bypassed; no SQL opened in unit tests.
         };
         try
         {
@@ -143,12 +143,17 @@ internal static class ApiSurfaceProbe
                 string loaded = null;
                 string upgraded = SqlConfiguration.TryUpgradeDpapiEncryption(current, value => loaded = value);
                 Check(upgraded != current && loaded == upgraded && SqlConfiguration.RuntimeConnectionKey == upgraded);
-                Check(Options(upgraded).Encrypt && !Options(upgraded).TrustServerCertificate && Options(upgraded).ConnectTimeout == 17);
+                Check(Options(upgraded).Encrypt && Options(upgraded).TrustServerCertificate && Options(upgraded).ConnectTimeout == 17);
                 Check(Credential(upgraded) == "test-password");
                 RejectLifecycle(() => SqlSessions.Acquire(current));
                 int count = probes;
                 Check(SqlConfiguration.TryUpgradeDpapiEncryption(upgraded, null) == upgraded && probes == count);
             }
+            current = FreshDpapi("Encrypt=True;TrustServerCertificate=False;");
+            before = File.ReadAllBytes(DpaPath);
+            int secureCount = probes;
+            Check(SqlConfiguration.TryUpgradeDpapiEncryption(current, null) == current && probes == secureCount);
+            Check(File.ReadAllBytes(DpaPath).SequenceEqual(before) && !Options(current).TrustServerCertificate);
             current = FreshDpapi("Encrypt=False;");
             SetAutoUpgrade(false);
             int disabledCount = probes;

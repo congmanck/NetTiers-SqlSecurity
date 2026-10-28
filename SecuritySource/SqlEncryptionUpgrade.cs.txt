@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Configuration;
 using System.Data.SqlClient;
@@ -50,7 +50,7 @@ namespace __DAL_NAMESPACE__.Security
                 }
 
                 options.Encrypt = true;
-                options.TrustServerCertificate = false;
+                options.TrustServerCertificate = true;
                 if (!options.DataSource.StartsWith("tcp:", StringComparison.OrdinalIgnoreCase)) options.DataSource = "tcp:" + options.DataSource;
                 // The timeout belongs to the probe only. Preserve the normal timeout in DPAPI.
                 var probeOptions = new SqlConnectionStringBuilder(options.ConnectionString) { ConnectTimeout = 3 };
@@ -94,7 +94,7 @@ namespace __DAL_NAMESPACE__.Security
                                 using (var verified = LegacyConnectionDecoder.DecodeFileBytes(File.ReadAllBytes(path)))
                                 {
                                     var transport = new SqlConnectionStringBuilder(verified.ConnectionString);
-                                    if (!transport.Encrypt || transport.TrustServerCertificate) throw new InvalidOperationException("TLS configuration verification failed.");
+                                    if (!transport.Encrypt || !transport.TrustServerCertificate) throw new InvalidOperationException("TLS configuration verification failed.");
                                 }
                                 // WriteAtomic keeps its last-good backup until this callback succeeds.
                                 if (reloadProvider != null && string.Equals(Path.GetFullPath(path), sourcePath, StringComparison.OrdinalIgnoreCase))

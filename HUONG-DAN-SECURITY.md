@@ -108,10 +108,14 @@ SecuritySource/SqlEncryptionUpgrade.cs.txt được sinh vào DAL và đăng ký
 
 API `TryUpgradeDpapiEncryption(currentReference, reloadProvider)` thử tối đa một lần cho mỗi phiên bản DPAPI trong mỗi tiến trình. Chỉ gọi ở bootstrap/đăng nhập đang nhàn rỗi; callback chỉ reload metadata, không mở kết nối SQL, và phải nhận lại reference cũ khi rollback. Caller phải bind provider với reference hiện hành trước khi gọi và dùng reference trả về. Không đưa API này vào constructor SqlSession hoặc từng câu SQL.
 
-DPAPI thiếu Encrypt hoặc đang False được thử TCP + Encrypt=True + TrustServerCertificate=False; probe cần DMV encrypt_option=TRUE và net_transport=TCP. Probe timeout kết nối/query 3 giây, không giữ SessionGate/file mutex lúc chờ mạng. Probe lỗi không thay file/phiên cũ, không hiện modal và không downgrade cấu hình True.
+DPAPI thiếu Encrypt hoặc đang False được thử TCP + Encrypt=True + TrustServerCertificate=True (bỏ qua xác minh chứng thư và danh tính server); probe cần DMV encrypt_option=TRUE và net_transport=TCP. Probe timeout kết nối/query 3 giây, không giữ SessionGate/file mutex lúc chờ mạng. Probe lỗi không thay file/phiên cũ, không hiện modal và không downgrade cấu hình True.
 
 Commit dùng named mutex Global theo đường dẫn cùng fingerprint kiểm tra lại; các writer cấu hình trong SqlConfiguration tham gia cùng mutex. Lưu atomic, verify DPAPI và reload metadata thành công trước khi publish reference. Backup giữ tới khi callback thành công; lỗi khôi phục file/provider cũ, lỗi recovery phải dừng. Không bỏ phụ thuộc khóa HPCF2 hoặc đổi kind/chuẩn cipher. Phiên chính giữ timeout cũ và dùng TCP đã kiểm tra.
 
 HocPhi/Common/SqlProviderConfiguration.cs tích hợp API vào frmMain và frmDangNhap, cập nhật cả default provider, ConnectionScope của UI và Utility.connection. Các ứng dụng khác dùng template phải tích hợp callback riêng; chỉ regenerate DAL không tự chèn bootstrap vào UI riêng của ứng dụng. Token/App.config không bị viết lại bởi API; nguồn chưa là DPAPI phải qua migration hiện có trước.
 
-Tests/Test-ApiHardening.ps1 hiện đạt 178 kiểm tra cho mỗi namespace, bao gồm fake-probe thành công/thất bại, chống lặp, rollback provider/file, writer đồng thời, mutex giữa hai tiến trình và cipher/key HPCF2 sau upgrade. Tests/Framework48Probe.cst và PasswordHasherProbe.cst kiểm tra mặc định appSetting và Compile Include mới bằng engine. Các unit test không mở SQL; TLS thật với chứng thư tin cậy còn là bước nghiệm thu môi trường.
+Tests/Test-ApiHardening.ps1 hiện đạt 180 kiểm tra cho mỗi namespace, bao gồm fake-probe thành công/thất bại, chống lặp, rollback provider/file, writer đồng thời, mutex giữa hai tiến trình và cipher/key HPCF2 sau upgrade. Tests/Framework48Probe.cst và PasswordHasherProbe.cst kiểm tra mặc định appSetting và Compile Include mới bằng engine. Các unit test không mở SQL; TLS thật kiểm tra riêng với TrustServerCertificate=True.
+
+### Cập nhật 28/10/2026
+
+Tự nâng DPAPI dùng Encrypt=True;TrustServerCertificate=True, chỉ lưu khi chính phiên probe xác nhận TCP và encrypt_option=TRUE. Không thay đổi kết nối đã Encrypt=True; mặc định thủ công mới vẫn True/False, token giữ nguyên. Không tự hạ Encrypt khi lỗi.
